@@ -1,0 +1,172 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+}
+
+enum Role {
+  admin
+  lawyer
+  paralegal
+}
+
+enum CaseStatus {
+  open
+  closed
+  pending
+}
+
+enum RiskLevel {
+  low
+  medium
+  high
+}
+
+enum RequestStatus {
+  pending
+  fulfilled
+  rejected
+}
+
+enum TaskStatus {
+  pending
+  in_progress
+  completed
+}
+
+enum EventType {
+  Hearing
+  Trial
+  Adjournment
+  Motion
+  Conference
+}
+
+model Profile {
+  id         String   @id @default(uuid()) @db.Uuid
+  name       String
+  email      String   @unique
+  role       Role
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  version    Int      @default(1)
+
+  cases_as_lawyer    Case[]     @relation("LawyerCases")
+  cases_as_paralegal Case[]     @relation("ParalegalCases")
+  uploaded_documents Document[]
+  assigned_tasks     Task[]
+}
+
+model Client {
+  id         String   @id @default(uuid()) @db.Uuid
+  name       String
+  email      String   @unique
+  phone      String?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  version    Int      @default(1)
+
+  cases Case[]
+}
+
+model Case {
+  id              String     @id @default(uuid()) @db.Uuid
+  title           String
+  status          CaseStatus
+  client_id       String     @db.Uuid
+  lawyer_id       String     @db.Uuid
+  paralegal_id    String?    @db.Uuid
+  risk_level      RiskLevel?
+  internal_notes  String?
+  lawyer_comments String?
+  created_at      DateTime   @default(now())
+  updated_at      DateTime   @updatedAt
+  version         Int        @default(1)
+
+  client            Client            @relation(fields: [client_id], references: [id])
+  lawyer            Profile           @relation("LawyerCases", fields: [lawyer_id], references: [id])
+  paralegal         Profile?          @relation("ParalegalCases", fields: [paralegal_id], references: [id])
+  document_requests DocumentRequest[]
+  documents         Document[]
+  court_events      CourtEvent[]
+  timeline_events   TimelineEvent[]
+  tasks             Task[]
+}
+
+model DocumentRequest {
+  id          String        @id @default(uuid()) @db.Uuid
+  case_id     String        @db.Uuid
+  title       String
+  description String?
+  status      RequestStatus
+  created_at  DateTime      @default(now())
+  updated_at  DateTime      @updatedAt
+  version     Int           @default(1)
+
+  case      Case       @relation(fields: [case_id], references: [id])
+  documents Document[]
+}
+
+model Document {
+  id          String   @id @default(uuid()) @db.Uuid
+  request_id  String?  @db.Uuid
+  case_id     String   @db.Uuid
+  file_name   String
+  file_path   String
+  mime_type   String
+  size_bytes  Int
+  uploaded_by String   @db.Uuid
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+  version     Int      @default(1)
+
+  case    Case             @relation(fields: [case_id], references: [id])
+  request DocumentRequest? @relation(fields: [request_id], references: [id])
+  profile Profile          @relation(fields: [uploaded_by], references: [id])
+}
+
+model CourtEvent {
+  id          String    @id @default(uuid()) @db.Uuid
+  case_id     String    @db.Uuid
+  event_date  DateTime
+  event_type  EventType
+  title       String
+  description String?
+  created_at  DateTime  @default(now())
+  updated_at  DateTime  @updatedAt
+  version     Int       @default(1)
+
+  case Case @relation(fields: [case_id], references: [id])
+}
+
+model TimelineEvent {
+  id             String   @id @default(uuid()) @db.Uuid
+  case_id        String   @db.Uuid
+  event_date     DateTime
+  title          String
+  description    String?
+  client_visible Boolean  @default(true)
+  created_at     DateTime @default(now())
+  updated_at     DateTime @updatedAt
+  version        Int      @default(1)
+
+  case Case @relation(fields: [case_id], references: [id])
+}
+
+model Task {
+  id          String     @id @default(uuid()) @db.Uuid
+  case_id     String     @db.Uuid
+  assignee_id String     @db.Uuid
+  title       String
+  description String?
+  due_date    DateTime
+  status      TaskStatus
+  created_at  DateTime   @default(now())
+  updated_at  DateTime   @updatedAt
+  version     Int        @default(1)
+
+  case     Case    @relation(fields: [case_id], references: [id])
+  assignee Profile @relation(fields: [assignee_id], references: [id])
+}
