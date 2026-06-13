@@ -3,7 +3,7 @@
 import { db } from '@/lib/db'
 import { createClient } from '@/lib/supabase/server'
 import { revalidatePath } from 'next/cache'
-import { CaseStatus, RiskLevel } from '@lawfirm/database'
+import type { CaseStatus, RiskLevel } from '@prisma/client'
 
 export async function getCases() {
   const supabase = await createClient()

@@ -3,7 +3,7 @@
 import { supabaseAdmin } from '@/lib/supabase/admin'
 import { createClient } from '@/lib/supabase/server'
 import { db } from '@/lib/db'
-import { Role } from '@lawfirm/database'
+import type { Role } from '@prisma/client'
 
 export async function inviteTeamMember(email: string, role: Role) {
   const supabase = await createClient()
