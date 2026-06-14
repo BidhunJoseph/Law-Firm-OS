@@ -111,7 +111,7 @@ export function getColumns(onRefresh: () => void): ColumnDef<Profile>[] {
       accessorKey: 'is_active',
       header: 'Status',
       cell: ({ row }) => (
-        <div className={\capitalize px-2 py-1 rounded-md inline-block text-xs font-medium \\}>
+        <div className={`capitalize px-2 py-1 rounded-md inline-block text-xs font-medium ${row.original.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
           {row.original.is_active ? 'Active' : 'Deactivated'}
         </div>
       ),

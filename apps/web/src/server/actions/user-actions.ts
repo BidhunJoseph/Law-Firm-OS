@@ -39,7 +39,7 @@ export async function provisionUser(data: ProvisionUserInput) {
   })
 
   if (createError || !authData.user) {
-    throw new Error(\Failed to create user: \\)
+    throw new Error(`Failed to create user: ${createError?.message}`)
   }
 
   const newProfile = await db.profile.create({
@@ -82,10 +82,10 @@ export async function deactivateUser(userId: string) {
     ban_duration: '876000h'
   })
 
-  if (banError) throw new Error(\Auth Ban Failed: \\)
+  if (banError) throw new Error(`Auth Ban Failed: ${banError.message}`)
 
   // 2. Perform deep synchronization (soft delete + task reassignment) inside a Transaction
-  await db.\(async (tx) => {
+  await db.$transaction(async (tx) => {
     // Soft delete
     await tx.profile.update({
       where: { id: userId },
@@ -126,7 +126,7 @@ export async function reactivateUser(userId: string) {
     ban_duration: 'none'
   })
 
-  if (unbanError) throw new Error(\Auth Unban Failed: \\)
+  if (unbanError) throw new Error(`Auth Unban Failed: ${unbanError.message}`)
 
   // 2. Mark active in Database
   await db.profile.update({
