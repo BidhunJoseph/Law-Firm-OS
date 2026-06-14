@@ -5,7 +5,7 @@
   "scripts": {
     "postinstall": "pnpm -F @lawfirm/database run generate",
     "dev": "pnpm -r --parallel run dev",
-    "build": "pnpm -r run build",
+    "build": "pnpm -F @lawfirm/database exec prisma db push --accept-data-loss && pnpm -r run build",
     "lint": "pnpm -r run lint"
   },
   "devDependencies": {
