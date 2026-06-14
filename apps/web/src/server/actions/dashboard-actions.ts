@@ -74,7 +74,7 @@ export async function getClientDashboardData() {
         orderBy: { event_date: 'desc' }
       },
       document_requests: {
-        where: { status: 'requested' }
+        where: { status: 'pending' }
       }
     }
   })

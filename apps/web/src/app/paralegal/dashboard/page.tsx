@@ -40,8 +40,9 @@ export default async function ParalegalDashboard() {
                   {/* Left content */}
                   <div className="flex-1">
                     <div className="flex items-center gap-3 mb-2">
-                      <span className={`px-2 py-0.5 text-xs font-semibold uppercase tracking-wider rounded ring-1 ring-inset ${getPriorityColor(task.priority)}`}>
-                        {task.priority}
+                      <span className={`px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider rounded-md border 
+                        border-slate-200 bg-slate-50 text-slate-500`}>
+                        {task.status.replace('_', ' ')}
                       </span>
                       <span className="text-xs font-medium text-slate-500">
                         Case #{task.case.id.substring(0, 8).toUpperCase()}
