@@ -44,7 +44,7 @@ export default async function ParalegalDashboard() {
                         {task.priority}
                       </span>
                       <span className="text-xs font-medium text-slate-500">
-                        {task.case.case_code}
+                        Case #{task.case.id.substring(0, 8).toUpperCase()}
                       </span>
                     </div>
                     

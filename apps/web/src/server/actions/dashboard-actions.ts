@@ -64,7 +64,6 @@ export async function getClientDashboardData() {
     where: { client_id: user.id }, // Note: client_id matches the Auth User ID for clients
     select: {
       id: true,
-      case_code: true,
       title: true,
       status: true,
       lawyer: {

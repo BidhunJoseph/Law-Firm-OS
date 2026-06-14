@@ -22,7 +22,7 @@ export default async function ClientPortal() {
           <div key={c.id} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
             <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
               <div>
-                <div className="text-sm font-medium text-blue-600 mb-1">{c.case_code}</div>
+                <div className="text-sm font-medium text-blue-600 mb-1">Case #{c.id.substring(0, 8).toUpperCase()}</div>
                 <h2 className="text-lg font-semibold text-slate-900">{c.title}</h2>
               </div>
               <span className="px-3 py-1 bg-green-50 text-green-700 text-sm font-medium rounded-full ring-1 ring-inset ring-green-600/20">
