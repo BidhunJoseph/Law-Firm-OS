@@ -10,7 +10,7 @@ export default async function TeamPage() {
   const { data: { user } } = await supabase.auth.getUser();
 
   if (!user) {
-    redirect("/login");
+    redirect("/");
   }
 
   // Double check manager role
@@ -18,9 +18,12 @@ export default async function TeamPage() {
     where: { id: user.id }
   });
 
-  if (profile?.role !== "admin") {
-    // Or whatever role denotes manager
-    redirect("/");
+  if (!profile) {
+    return <div className="p-8 text-center text-red-600">Error: Your user account does not have an associated database profile. Please contact support.</div>;
+  }
+
+  if (profile.role !== "admin") {
+    return <div className="p-8 text-center text-red-600">Error: You do not have permission to view the Team Directory.</div>;
   }
 
   const teamMembers = await db.profile.findMany({
