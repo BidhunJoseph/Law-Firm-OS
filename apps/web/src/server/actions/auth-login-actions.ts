@@ -17,19 +17,6 @@ export async function loginUser(data: { email: string; password: string }) {
     return { error: parsed.error.issues[0]?.message || 'Invalid credentials' }
   }
 
-  // MOCK AUTH BYPASS: Because the workspace firewall blocks outbound 443 to Supabase,
-  // we will simulate a successful login and set a mock cookie so the user can test the UI.
-  if (process.env.NODE_ENV === 'development') {
-    const { cookies } = await import('next/headers');
-    let mockRole = 'lawyer';
-    if (data.email.includes('manager')) mockRole = 'admin';
-    if (data.email.includes('paralegal')) mockRole = 'paralegal';
-    if (data.email.includes('client')) mockRole = 'client';
-    
-    (await cookies()).set('mock_user_role', mockRole, { path: '/' });
-    return { success: true };
-  }
-
   const supabase = await createClient()
 
   const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
@@ -41,7 +28,30 @@ export async function loginUser(data: { email: string; password: string }) {
     return { error: authError?.message || 'Invalid login credentials' }
   }
 
-  return { success: true }
+  // Determine Role to auto-route
+  const user = authData.user;
+  
+  try {
+    const { db } = await import('@/lib/db');
+    const profile = await db.profile.findUnique({
+      where: { id: user.id }
+    });
+
+    let redirectUrl = '/client/portal'; // Fallback / default
+    if (profile) {
+      if (profile.role === 'admin') redirectUrl = '/manager/dashboard';
+      if (profile.role === 'lawyer') redirectUrl = '/workspace';
+      if (profile.role === 'paralegal') redirectUrl = '/paralegal/dashboard';
+    } else {
+      // If no profile, they might be a client in the Client table, but we default to client portal anyway
+      redirectUrl = '/client/portal';
+    }
+
+    return { success: true, redirectUrl };
+  } catch (err) {
+    console.error("Failed to lookup profile role, defaulting to client portal", err);
+    return { success: true, redirectUrl: '/client/portal' };
+  }
 }
 
 export async function resetPassword(prevState: any, formData: FormData) {
