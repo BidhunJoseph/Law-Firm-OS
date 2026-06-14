@@ -9,7 +9,7 @@ export function AppShell({ children, userRole }: { children: React.ReactNode, us
   const pathname = usePathname();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
-  if (pathname === '/login') {
+  if (pathname === '/' || pathname === '/login') {
     return <>{children}</>;
   }
 
