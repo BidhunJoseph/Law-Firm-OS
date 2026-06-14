@@ -53,6 +53,7 @@ model Profile {
   email      String   @unique
   role       Role
   requires_password_reset Boolean @default(true)
+  is_active  Boolean @default(true)
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt
   version    Int      @default(1)

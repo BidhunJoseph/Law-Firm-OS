@@ -13,6 +13,9 @@ export type ProvisionUserInput = {
   password?: string;
 }
 
+/**
+ * Provisions a new user in both Supabase Auth and Prisma
+ */
 export async function provisionUser(data: ProvisionUserInput) {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -22,10 +25,9 @@ export async function provisionUser(data: ProvisionUserInput) {
   const adminProfile = await db.profile.findUnique({ where: { id: user.id } })
   if (adminProfile?.role !== 'admin') throw new Error('Forbidden: Only admins can provision users')
 
-  // Generate a random temporary password if not provided
   const password = data.password || Math.random().toString(36).slice(-10) + 'A1!'
 
-  // Use Admin API to create user, bypassing email verification and auto-confirming
+  // Admin API bypasses email confirmation requirements for seamless provisioning
   const { data: authData, error: createError } = await supabaseAdmin.auth.admin.createUser({
     email: data.email,
     password: password,
@@ -37,10 +39,9 @@ export async function provisionUser(data: ProvisionUserInput) {
   })
 
   if (createError || !authData.user) {
-    throw new Error(`Failed to create user: ${createError?.message}`)
+    throw new Error(\Failed to create user: \\)
   }
 
-  // Create Profile in Database
   const newProfile = await db.profile.create({
     data: {
       id: authData.user.id,
@@ -48,15 +49,21 @@ export async function provisionUser(data: ProvisionUserInput) {
       name: data.name,
       role: data.role,
       requires_password_reset: true,
+      is_active: true,
     }
   })
 
   revalidatePath('/workspace')
   revalidatePath('/manager')
+  revalidatePath('/manager/team')
 
   return { profile: newProfile, tempPassword: password }
 }
 
+/**
+ * Deactivates a user: Bans them in Supabase, marks inactive in Prisma,
+ * and transfers all their active tasks to the calling Admin.
+ */
 export async function deactivateUser(userId: string) {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -66,14 +73,66 @@ export async function deactivateUser(userId: string) {
   const adminProfile = await db.profile.findUnique({ where: { id: user.id } })
   if (adminProfile?.role !== 'admin') throw new Error('Forbidden: Only admins can deactivate users')
 
-  // Ban in Supabase Auth to prevent future logins
+  if (userId === user.id) {
+    throw new Error('You cannot deactivate your own admin account.')
+  }
+
+  // 1. Ban user in Auth layer (100 years)
   const { error: banError } = await supabaseAdmin.auth.admin.updateUserById(userId, {
-    ban_duration: '876000h' // Banned for 100 years
+    ban_duration: '876000h'
   })
 
-  if (banError) {
-    throw new Error(`Failed to ban user in auth layer: ${banError.message}`)
-  }
+  if (banError) throw new Error(\Auth Ban Failed: \\)
+
+  // 2. Perform deep synchronization (soft delete + task reassignment) inside a Transaction
+  await db.\(async (tx) => {
+    // Soft delete
+    await tx.profile.update({
+      where: { id: userId },
+      data: { is_active: false }
+    })
+
+    // Reassign open tasks to the Admin to prevent data orphans
+    await tx.task.updateMany({
+      where: {
+        assignee_id: userId,
+        status: { in: ['pending', 'in_progress'] }
+      },
+      data: {
+        assignee_id: user.id // Transfer to admin
+      }
+    })
+  })
+
+  revalidatePath('/manager/team')
+  revalidatePath('/workspace')
+  return { success: true }
+}
+
+/**
+ * Reactivates a previously banned/deactivated user.
+ */
+export async function reactivateUser(userId: string) {
+  const supabase = await createClient()
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+
+  if (authError || !user) throw new Error('Unauthorized')
+
+  const adminProfile = await db.profile.findUnique({ where: { id: user.id } })
+  if (adminProfile?.role !== 'admin') throw new Error('Forbidden: Only admins can reactivate users')
+
+  // 1. Unban user in Auth layer (set ban_duration to "none")
+  const { error: unbanError } = await supabaseAdmin.auth.admin.updateUserById(userId, {
+    ban_duration: 'none'
+  })
+
+  if (unbanError) throw new Error(\Auth Unban Failed: \\)
+
+  // 2. Mark active in Database
+  await db.profile.update({
+    where: { id: userId },
+    data: { is_active: true }
+  })
 
   revalidatePath('/manager/team')
   return { success: true }
