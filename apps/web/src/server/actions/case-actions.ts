@@ -84,6 +84,8 @@ export async function createCase(data: CreateCaseInput) {
   return newCase
 }
 
+import { evaluateCaseRisk } from '../engine/situation-engine'
+
 export async function updateCase(id: string, data: Partial<CreateCaseInput>) {
   const supabase = await createClient()
   const { data: { user }, error } = await supabase.auth.getUser()
@@ -103,6 +105,9 @@ export async function updateCase(id: string, data: Partial<CreateCaseInput>) {
     data
   })
   
+  // Trigger Deep Sync for Situation Engine
+  await evaluateCaseRisk(id).catch(err => console.error('Failed to evaluate risk:', err))
+
   revalidatePath('/workspace')
   revalidatePath(`/workspace/cases/${id}`)
   revalidatePath('/manager')

@@ -10,21 +10,26 @@ import {
   Trash2, 
   Plus,
   Cloud,
-  LayoutDashboard
+  LayoutDashboard,
+  Shield,
+  X
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-export function Sidebar() {
+export function Sidebar({ userRole, isOpen, onClose }: { userRole?: string | null, isOpen?: boolean, onClose?: () => void }) {
   const pathname = usePathname();
 
-  const navItems = [
-    { icon: LayoutDashboard, label: "Workspace", href: "/workspace" },
-    { icon: FolderKanban, label: "Matters", href: "/manager/court" },
-    { icon: Users, label: "Clients", href: "/client/portal" },
-    { icon: FileText, label: "Documents", href: "/client/documents" },
-    { icon: Calendar, label: "Calendar", href: "#" },
+  const allNavItems = [
+    { icon: LayoutDashboard, label: "Workspace", href: "/workspace", roles: ["manager", "admin", "lawyer", "paralegal"] },
+    { icon: FolderKanban, label: "Matters", href: "/manager/court", roles: ["manager", "admin", "lawyer", "paralegal"] },
+    { icon: Users, label: "Clients", href: "/client/portal", roles: ["manager", "admin", "lawyer", "paralegal", "client"] },
+    { icon: FileText, label: "Documents", href: "/client/documents", roles: ["manager", "admin", "lawyer", "paralegal", "client"] },
+    { icon: Shield, label: "Team", href: "/manager/team", roles: ["manager", "admin"] },
+    { icon: Calendar, label: "Calendar", href: "#", roles: ["manager", "admin", "lawyer", "paralegal"] },
   ];
+
+  const navItems = allNavItems.filter(item => !userRole || item.roles.includes(userRole));
 
   const secondaryItems = [
     { icon: Clock, label: "Recent" },
@@ -33,13 +38,32 @@ export function Sidebar() {
   ];
 
   return (
-    <aside className="w-64 bg-[#f8f9fa] shrink-0 flex-col hidden lg:flex">
-      <div className="px-4 py-3">
-        <button className="flex items-center gap-3 bg-white hover:bg-blue-50 hover:text-blue-700 hover:shadow-md transition-all text-gray-700 border border-gray-200 shadow-sm rounded-2xl px-5 py-4 font-medium w-fit min-w-[140px]">
-          <Plus className="h-6 w-6 text-blue-600" />
-          <span className="text-[15px]">New</span>
-        </button>
-      </div>
+    <>
+      {/* Mobile Backdrop */}
+      {isOpen && (
+        <div 
+          className="fixed inset-0 z-40 bg-gray-900/50 backdrop-blur-sm lg:hidden transition-opacity"
+          onClick={onClose}
+        />
+      )}
+
+      <aside className={`fixed inset-y-0 left-0 z-50 w-72 bg-[#f8f9fa] flex-col transform transition-transform duration-300 ease-in-out lg:relative lg:w-64 lg:translate-x-0 ${isOpen ? 'translate-x-0 flex shadow-2xl' : '-translate-x-full hidden lg:flex'}`}>
+        
+        {/* Mobile Header with Close Button */}
+        <div className="flex items-center justify-between px-6 py-4 lg:hidden border-b border-gray-200">
+          <span className="text-xl font-semibold text-gray-800">Menu</span>
+          <button onClick={onClose} className="p-2 hover:bg-gray-200 rounded-full transition-colors text-gray-500">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+      {userRole !== "client" && (
+        <div className="px-4 py-3">
+          <button className="flex items-center gap-3 bg-white hover:bg-blue-50 hover:text-blue-700 hover:shadow-md transition-all text-gray-700 border border-gray-200 shadow-sm rounded-2xl px-5 py-4 font-medium w-fit min-w-[140px]">
+            <Plus className="h-6 w-6 text-blue-600" />
+            <span className="text-[15px]">New</span>
+          </button>
+        </div>
+      )}
 
       <div className="flex-1 overflow-y-auto px-3 py-2 space-y-1">
         <nav className="space-y-0.5">
@@ -91,5 +115,6 @@ export function Sidebar() {
         </div>
       </div>
     </aside>
+    </>
   );
 }

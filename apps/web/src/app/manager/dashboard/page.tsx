@@ -246,7 +246,7 @@ export default function ManagerDashboard() {
   });
 
   return (
-    <div className="min-h-screen bg-[#f8f9fa] dark:bg-neutral-950 p-4 md:p-6 lg:p-8 font-sans">
+    <div className="min-h-full bg-[#f8f9fa] dark:bg-neutral-950 p-4 md:p-6 lg:p-8 font-sans">
       <div className="max-w-[1600px] mx-auto space-y-6">
         {/* Header Section */}
         <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">

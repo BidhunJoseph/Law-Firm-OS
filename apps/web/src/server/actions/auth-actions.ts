@@ -5,7 +5,7 @@ import { createClient } from '@/lib/supabase/server'
 import { db } from '@/lib/db'
 import type { Role } from '@prisma/client'
 
-export async function inviteTeamMember(email: string, role: Role) {
+export async function inviteTeamMember(name: string, email: string, role: Role, tempPassword?: string) {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -43,7 +43,7 @@ export async function inviteTeamMember(email: string, role: Role) {
         },
         create: {
           id: data.user.id,
-          name: email.split('@')[0], // Placeholder name
+          name: name || email.split('@')[0], // Use provided name
           email,
           role,
         }
@@ -55,4 +55,53 @@ export async function inviteTeamMember(email: string, role: Role) {
   }
 
   return { success: true, user: data.user }
+}
+
+export async function deleteTeamMember(id: string) {
+  const supabase = await createClient()
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+
+  if (authError || !user) {
+    throw new Error('Unauthorized')
+  }
+
+  // Verify caller is an admin
+  const callerProfile = await db.profile.findUnique({
+    where: { id: user.id }
+  })
+
+  if (!callerProfile || callerProfile.role !== 'admin') {
+    throw new Error('Forbidden: Only managers can delete team members')
+  }
+
+  // Don't allow an admin to delete themselves this way
+  if (id === user.id) {
+    throw new Error('Cannot delete your own account via this action')
+  }
+
+  // Soft Delete: Prevent future logins by banning them for 100 years.
+  // We DO NOT hard delete the Profile, as it would destroy historical Case assignments.
+  const { error } = await supabaseAdmin.auth.admin.updateUserById(id, {
+    ban_duration: '876000h' 
+  })
+
+  if (error) {
+    console.error('Failed to ban auth user:', error)
+    throw new Error('Failed to ban user auth')
+  }
+
+  // Update their profile name to indicate deactivation (optional visual cue)
+  try {
+    const p = await db.profile.findUnique({ where: { id } })
+    if (p && !p.name.includes('(Deactivated)')) {
+      await db.profile.update({
+        where: { id },
+        data: { name: `${p.name} (Deactivated)` }
+      })
+    }
+  } catch (dbError) {
+    console.error('Failed to update profile name:', dbError)
+  }
+
+  return { success: true }
 }

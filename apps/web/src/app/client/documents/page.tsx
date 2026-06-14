@@ -139,7 +139,7 @@ export default function DocumentPortalPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50/50 p-6 lg:p-10 text-gray-900">
+    <div className="min-h-full bg-gray-50/50 p-6 lg:p-10 text-gray-900">
       <div className="max-w-6xl mx-auto space-y-10">
         
         {/* Header */}
