@@ -66,11 +66,43 @@ export async function resetPassword(prevState: any, formData: FormData) {
     return { error: 'Passwords do not match' }
   }
 
-  // TODO: QA engineer to implement Supabase update user password logic here
-  // const supabase = await createClient()
-  // await supabase.auth.updateUser({ password })
+  const supabase = await createClient()
+  const { error } = await supabase.auth.updateUser({ password })
 
-  redirect('/workspace')
+  if (error) {
+    return { error: error.message }
+  }
+
+  // Also update Prisma Profile to clear requires_password_reset
+  const { data: { user } } = await supabase.auth.getUser()
+  if (user) {
+    await db.profile.update({
+      where: { id: user.id },
+      data: { requires_password_reset: false }
+    }).catch(() => {
+      // Ignore if no profile (e.g. they are a client)
+    })
+  }
+
+  let redirectUrl = '/workspace'
+  if (user) {
+    try {
+      const profile = await db.profile.findUnique({
+        where: { id: user.id }
+      })
+      if (!profile) {
+        redirectUrl = '/client/portal'
+      } else if (profile.role === 'admin') {
+        redirectUrl = '/manager/dashboard'
+      } else if (profile.role === 'paralegal') {
+        redirectUrl = '/paralegal/dashboard'
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  redirect(redirectUrl)
 }
 
 export async function logoutUser() {

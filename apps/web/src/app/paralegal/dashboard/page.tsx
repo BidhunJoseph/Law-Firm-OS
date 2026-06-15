@@ -1,10 +1,11 @@
-import { getParalegalDashboardData } from "@/server/actions/dashboard-actions";
+import { getParalegalDashboardData, getParalegalCases } from "@/server/actions/dashboard-actions";
 import { CheckCircle2, Clock, Calendar, AlertCircle } from "lucide-react";
 
 export const dynamic = 'force-dynamic';
 
 export default async function ParalegalDashboard() {
   const tasks = await getParalegalDashboardData();
+  const cases = await getParalegalCases();
 
   const getPriorityColor = (priority: string) => {
     switch (priority) {
@@ -15,16 +16,56 @@ export default async function ParalegalDashboard() {
     }
   };
 
-  return (
-    <div className="flex-1 flex flex-col h-full bg-slate-50">
-      {/* Header */}
-      <div className="px-6 py-5 bg-white border-b border-slate-200">
-        <h1 className="text-xl font-semibold text-slate-900">Execution Desk</h1>
-        <p className="text-sm text-slate-500 mt-1">You have {tasks.length} active tasks in your queue.</p>
-      </div>
+  const actionRequiredPhases = [
+    "5. Registration & Filing",
+    "7. Judgment & Execution"
+  ];
 
-      {/* Main Board */}
-      <div className="flex-1 overflow-auto p-6">
+  const actionRequiredCases = cases.filter(c => actionRequiredPhases.includes(c.current_phase));
+
+  return (
+    <div className="flex-1 flex flex-col h-full bg-[#fbfcfd]">
+      <header className="bg-white/80 backdrop-blur-xl border-b border-gray-100 px-6 py-5 sticky top-0 z-30 flex items-center justify-between shadow-[0_2px_10px_rgb(0,0,0,0.02)]">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Paralegal Dashboard</h1>
+          <p className="text-sm text-gray-500 mt-1">Manage document requests, tasks, and court filings.</p>
+        </div>
+      </header>
+
+      <div className="flex-1 overflow-auto p-6 space-y-6 bg-[#f8f9fa]">
+        
+        {/* Action Required Swimlane */}
+        {actionRequiredCases.length > 0 && (
+          <div className="mb-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <h2 className="text-sm font-bold text-gray-900 uppercase tracking-wider mb-4 flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-rose-500" /> Action Required (Filing & Execution)
+            </h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+              {actionRequiredCases.map(c => (
+                <div key={c.id} className="bg-white border border-rose-100 rounded-2xl p-5 shadow-[0_8px_30px_rgb(0,0,0,0.04)] relative overflow-hidden group hover:shadow-[0_8px_30px_rgb(0,0,0,0.08)] transition-all">
+                  <div className="absolute top-0 left-0 w-1 h-full bg-rose-500" />
+                  <div className="flex justify-between items-start mb-3">
+                    <div>
+                      <h3 className="font-semibold text-gray-900 group-hover:text-blue-600 transition-colors line-clamp-1">{c.title}</h3>
+                      <p className="text-xs text-gray-500 mt-0.5">{c.client?.name}</p>
+                    </div>
+                    <span className="px-2 py-1 bg-rose-50 text-rose-700 text-[10px] font-bold uppercase rounded-md border border-rose-100 whitespace-nowrap">
+                      {c.current_phase.split('. ')[1]}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-50">
+                    <div className="text-xs text-gray-500">
+                      <span className="font-medium text-gray-700">{c.tasks.length}</span> pending tasks
+                    </div>
+                    <a href={`/workspace/cases/${c.id}`} className="text-xs font-semibold text-blue-600 hover:text-blue-800">Review Matter &rarr;</a>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Quick Stats */}
         <div className="max-w-5xl space-y-6">
           {tasks.length === 0 ? (
              <div className="text-center py-12 bg-white rounded-xl border border-slate-200 shadow-sm">

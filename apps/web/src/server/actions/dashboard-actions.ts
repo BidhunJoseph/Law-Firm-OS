@@ -54,6 +54,23 @@ export async function getParalegalDashboardData() {
   return tasks
 }
 
+export async function getParalegalCases() {
+  const supabase = await createClient()
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+
+  if (authError || !user) return []
+
+  const cases = await db.case.findMany({
+    where: { paralegal_id: user.id },
+    include: {
+      client: true,
+      tasks: true
+    }
+  })
+
+  return cases
+}
+
 export async function getClientDashboardData() {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -66,6 +83,8 @@ export async function getClientDashboardData() {
       id: true,
       title: true,
       status: true,
+      current_phase: true,
+      next_action: true,
       lawyer: {
         select: { name: true, email: true }
       },
@@ -75,6 +94,9 @@ export async function getClientDashboardData() {
       },
       document_requests: {
         where: { status: 'pending' }
+      },
+      court_events: {
+        orderBy: { event_date: 'asc' }
       }
     }
   })

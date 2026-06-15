@@ -66,17 +66,33 @@ export async function evaluateCaseRisk(caseId: string): Promise<RiskLevel> {
   // $S = \max(S_D, S_M, S_I)$
   const S = Math.max(SD, SM, SI);
 
-  let newRiskLevel: RiskLevel = 'low'; // Prisma Enum mappings for RiskLevel: low, medium, high
+  let newRiskLevel: RiskLevel = 'low';
 
   if (S >= 50) newRiskLevel = 'high';
   else if (S >= 25) newRiskLevel = 'medium';
   else newRiskLevel = 'low';
 
+  // Deep Sync: Calculate `next_action` based on current_phase
+  let newNextAction = caseData.next_action;
+  
+  if (caseData.current_phase === 'intake') {
+    newNextAction = 'Collect KYC / Conflict Check';
+  } else if (caseData.current_phase === 'prospect') {
+    newNextAction = 'Finalize Retainer Agreement';
+  } else if (caseData.current_phase === 'active' && M > 0) {
+    newNextAction = 'Awaiting Client Documents';
+  } else if (D <= 14) {
+    newNextAction = 'Prepare for Upcoming Court Deadline';
+  }
+
   // Update DB if changed
-  if (caseData.risk_level !== newRiskLevel) {
+  if (caseData.risk_level !== newRiskLevel || caseData.next_action !== newNextAction) {
     await db.case.update({
       where: { id: caseId },
-      data: { risk_level: newRiskLevel }
+      data: { 
+        risk_level: newRiskLevel,
+        next_action: newNextAction
+      }
     });
   }
 

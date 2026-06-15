@@ -42,12 +42,6 @@ export default async function RootLayout({
     console.warn("Supabase Auth unreachable in RootLayout. Assuming unauthenticated or development fallback.");
   }
 
-  // MOCK AUTH BYPASS
-  if (!userRole && process.env.NODE_ENV === 'development') {
-    const { cookies } = await import('next/headers');
-    const mockCookie = (await cookies()).get('mock_user_role')?.value;
-    if (mockCookie) userRole = mockCookie;
-  }
 
   return (
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>

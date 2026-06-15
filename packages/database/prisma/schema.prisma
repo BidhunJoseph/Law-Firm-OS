@@ -68,8 +68,10 @@ model Profile {
 model Client {
   id         String   @id @default(uuid()) @db.Uuid
   name       String
-  email      String   @unique
-  phone      String?
+  email           String   @unique
+  phone           String?
+  passport_number String?
+  emirates_id     String?
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt
   version    Int      @default(1)
@@ -82,18 +84,21 @@ model Case {
   title           String
   status          CaseStatus
   client_id       String     @db.Uuid
-  lawyer_id       String     @db.Uuid
+  lawyer_id       String?    @db.Uuid
   paralegal_id    String?    @db.Uuid
   risk_level      RiskLevel?
+  case_type       String     @default("Civil Litigation")
+  current_phase   String     @default("1. Intake & Conflict Check")
+  next_action     String?
   internal_notes  String?
   lawyer_comments String?
-  embedding       Unsupported("vector(1536)")?
+  embedding       Unsupported("vector(768)")?
   created_at      DateTime   @default(now())
   updated_at      DateTime   @updatedAt
   version         Int        @default(1)
 
   client            Client            @relation(fields: [client_id], references: [id])
-  lawyer            Profile           @relation("LawyerCases", fields: [lawyer_id], references: [id])
+  lawyer            Profile?          @relation("LawyerCases", fields: [lawyer_id], references: [id])
   paralegal         Profile?          @relation("ParalegalCases", fields: [paralegal_id], references: [id])
   document_requests DocumentRequest[]
   documents         Document[]
@@ -112,7 +117,7 @@ model DocumentRequest {
   updated_at  DateTime      @updatedAt
   version     Int           @default(1)
 
-  case      Case       @relation(fields: [case_id], references: [id])
+  case      Case       @relation(fields: [case_id], references: [id], onDelete: Cascade)
   documents Document[]
 }
 
@@ -125,12 +130,12 @@ model Document {
   mime_type   String
   size_bytes  Int
   uploaded_by String   @db.Uuid
-  embedding   Unsupported("vector(1536)")?
+  embedding   Unsupported("vector(768)")?
   created_at  DateTime @default(now())
   updated_at  DateTime @updatedAt
   version     Int      @default(1)
 
-  case    Case             @relation(fields: [case_id], references: [id])
+  case    Case             @relation(fields: [case_id], references: [id], onDelete: Cascade)
   request DocumentRequest? @relation(fields: [request_id], references: [id])
   profile Profile          @relation(fields: [uploaded_by], references: [id])
 }
@@ -147,7 +152,7 @@ model CourtEvent {
   updated_at  DateTime  @updatedAt
   version     Int       @default(1)
 
-  case Case @relation(fields: [case_id], references: [id])
+  case Case @relation(fields: [case_id], references: [id], onDelete: Cascade)
 }
 
 model TimelineEvent {
@@ -161,7 +166,7 @@ model TimelineEvent {
   updated_at     DateTime @updatedAt
   version        Int      @default(1)
 
-  case Case @relation(fields: [case_id], references: [id])
+  case Case @relation(fields: [case_id], references: [id], onDelete: Cascade)
 }
 
 model Task {
@@ -176,7 +181,7 @@ model Task {
   updated_at  DateTime   @updatedAt
   version     Int        @default(1)
 
-  case     Case    @relation(fields: [case_id], references: [id])
+  case     Case    @relation(fields: [case_id], references: [id], onDelete: Cascade)
   assignee Profile @relation(fields: [assignee_id], references: [id])
 }
 

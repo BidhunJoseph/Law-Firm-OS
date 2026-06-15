@@ -43,13 +43,7 @@ export async function updateSession(request: NextRequest) {
     console.warn("Supabase Auth unreachable in middleware. Assuming unauthenticated or development fallback.");
   }
 
-  // MOCK AUTH BYPASS
-  if (!user && process.env.NODE_ENV === 'development') {
-    const mockCookie = request.cookies.get('mock_user_role')?.value;
-    if (mockCookie) {
-      user = { id: 'mock-user-id', email: 'mock@lawfirm.com' } as any;
-    }
-  }
+
 
   const path = request.nextUrl.pathname;
   

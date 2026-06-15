@@ -15,18 +15,19 @@ import {
   X
 } from "lucide-react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 
 export function Sidebar({ userRole, isOpen, onClose }: { userRole?: string | null, isOpen?: boolean, onClose?: () => void }) {
   const pathname = usePathname();
+  const router = useRouter();
 
   const allNavItems = [
     { icon: LayoutDashboard, label: "Workspace", href: "/workspace", roles: ["manager", "admin", "lawyer", "paralegal"] },
-    { icon: FolderKanban, label: "Matters", href: "/manager/court", roles: ["manager", "admin", "lawyer", "paralegal"] },
-    { icon: Users, label: "Clients", href: "/client/portal", roles: ["manager", "admin", "lawyer", "paralegal", "client"] },
+    { icon: FolderKanban, label: "Matters DB", href: "/manager/court", roles: ["manager", "admin"] },
+    { icon: Users, label: "Clients DB", href: "/manager/clients", roles: ["manager", "admin"] },
+    { icon: Users, label: "My Case", href: "/client/portal", roles: ["client"] },
     { icon: FileText, label: "Documents", href: "/client/documents", roles: ["manager", "admin", "lawyer", "paralegal", "client"] },
     { icon: Shield, label: "Team", href: "/manager/team", roles: ["manager", "admin"] },
-    { icon: Calendar, label: "Calendar", href: "#", roles: ["manager", "admin", "lawyer", "paralegal"] },
   ];
 
   const navItems = allNavItems.filter(item => !userRole || item.roles.includes(userRole));
@@ -58,9 +59,12 @@ export function Sidebar({ userRole, isOpen, onClose }: { userRole?: string | nul
         </div>
       {userRole !== "client" && (
         <div className="px-4 py-3">
-          <button className="flex items-center gap-3 bg-white hover:bg-blue-50 hover:text-blue-700 hover:shadow-md transition-all text-gray-700 border border-gray-200 shadow-sm rounded-2xl px-5 py-4 font-medium w-fit min-w-[140px]">
+          <button 
+            onClick={() => router.push("/manager/dashboard?new=matter")}
+            className="flex items-center gap-3 bg-white hover:bg-blue-50 hover:text-blue-700 hover:shadow-md transition-all text-gray-700 border border-gray-200 shadow-sm rounded-2xl px-5 py-4 font-medium w-fit min-w-[140px]"
+          >
             <Plus className="h-6 w-6 text-blue-600" />
-            <span className="text-[15px]">New</span>
+            <span className="text-[15px]">New Matter</span>
           </button>
         </div>
       )}

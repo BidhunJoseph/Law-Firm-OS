@@ -102,6 +102,17 @@ export async function deactivateUser(userId: string) {
         assignee_id: user.id // Transfer to admin
       }
     })
+
+    // Unassign from active cases to prevent new auto-spawned tasks being assigned to inactive user
+    await tx.case.updateMany({
+      where: { lawyer_id: userId },
+      data: { lawyer_id: null }
+    })
+    
+    await tx.case.updateMany({
+      where: { paralegal_id: userId },
+      data: { paralegal_id: null }
+    })
   })
 
   revalidatePath('/manager/team')
@@ -136,4 +147,16 @@ export async function reactivateUser(userId: string) {
 
   revalidatePath('/manager/team')
   return { success: true }
+}
+
+export async function getProfilesByRole(role: Role) {
+  const supabase = await createClient()
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+
+  if (authError || !user) throw new Error('Unauthorized')
+
+  return db.profile.findMany({
+    where: { role, is_active: true },
+    orderBy: { name: 'asc' }
+  })
 }
