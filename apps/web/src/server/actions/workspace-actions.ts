@@ -69,7 +69,11 @@ export async function updateTaskStatus(taskId: string, status: TaskStatus) {
 
   if (!profile) throw new Error('Profile not found')
 
-  if (profile.role !== 'admin' && task.assignee_id !== user.id) {
+  const role = String(profile.role).toLowerCase()
+  const isManagerOrAdmin = role === 'admin' || role === 'manager'
+  const isCaseOwner = task.case && (task.case.lawyer_id === user.id || task.case.paralegal_id === user.id)
+
+  if (!isManagerOrAdmin && task.assignee_id !== user.id && !isCaseOwner) {
     throw new Error('Unauthorized: You can only update your own tasks')
   }
 

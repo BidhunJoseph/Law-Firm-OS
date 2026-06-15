@@ -58,6 +58,7 @@ export default async function MatterPage({ params }: { params: Promise<{ id: str
     <MatterDashboardClient 
       caseData={caseData} 
       userRole={profile.role} 
+      userId={user.id}
     />
   );
 }
