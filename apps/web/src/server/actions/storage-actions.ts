@@ -13,11 +13,11 @@ export async function getStorageQuota() {
   // Sum all document sizes across the entire database to simulate the tenant's global quota
   const aggregate = await db.document.aggregate({
     _sum: {
-      size_bytes: true,
+      file_size_bytes: true,
     },
   });
 
-  const usedBytes = aggregate._sum.size_bytes || 0;
+  const usedBytes = Number(aggregate._sum.file_size_bytes || 0);
   
   return {
     usedBytes,
@@ -34,7 +34,7 @@ export async function getWorkspaceDocuments() {
   const documents = await db.document.findMany({
     include: {
       case: true,
-      profile: true,
+      uploader: true,
     },
     orderBy: { created_at: 'desc' }
   });
@@ -86,18 +86,23 @@ export async function registerDocumentMetadata(data: {
   const { data: { user }, error } = await supabase.auth.getUser();
   if (error || !user) throw new Error("Unauthorized");
 
+  const profile = await db.profile.findUnique({ where: { id: user.id } });
+  if (!profile) throw new Error("Profile not found");
+
   const document = await db.document.create({
     data: {
+      firm_id: profile.firm_id,
       file_name: data.fileName,
-      file_path: data.filePath,
+      storage_path: data.filePath,
+      storage_bucket: 'documents',
       mime_type: data.mimeType,
-      size_bytes: data.sizeBytes,
+      file_size_bytes: data.sizeBytes,
       case_id: data.caseId,
       uploaded_by: user.id,
     },
     include: {
       case: true,
-      profile: true
+      uploader: true
     }
   });
 
@@ -129,7 +134,7 @@ export async function deleteDocument(id: string) {
   if (!document) throw new Error("Document not found");
 
   // Remove from Supabase Storage
-  await supabase.storage.from('documents').remove([document.file_path]);
+  await supabase.storage.from(document.storage_bucket).remove([document.storage_path]);
 
   // Remove from DB
   await db.document.delete({ where: { id } });

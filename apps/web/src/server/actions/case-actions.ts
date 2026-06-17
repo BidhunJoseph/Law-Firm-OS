@@ -1,549 +1,465 @@
-'use server'
+'use server';
 
-import { db } from '@/lib/db'
-import { createClient } from '@/lib/supabase/server'
-import { revalidatePath } from 'next/cache'
-import type { CaseStatus, RiskLevel } from '@prisma/client'
-import { z } from 'zod'
-import { GoogleGenAI } from '@google/genai'
+import { db } from '@/lib/db';
+import { z } from 'zod';
+import { revalidatePath } from 'next/cache';
+import { createClient } from '@/lib/supabase/server';
+import crypto from 'crypto';
+import { runCaseCreationTriggers } from '../engine/automation-engine';
+import { provisionUser } from './user-actions';
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })
+/**
+ * ----------------------------------------------------
+ * Core Authentication & RLS Security Helper
+ * ----------------------------------------------------
+ */
+async function requireAuthAndFirm() {
+  const supabase = await createClient();
+  const { data: { session }, error } = await supabase.auth.getSession();
+  if (error || !session?.user) throw new Error("Unauthorized");
 
-export async function getCases() {
-  const supabase = await createClient()
-  const { data: { user }, error } = await supabase.auth.getUser()
-  
-  if (error || !user) throw new Error('Unauthorized')
-  
-  // Scope by role
-  const profile = await db.profile.findUnique({ where: { id: user.id } })
-  if (!profile) throw new Error('Profile not found')
+  let profile = await db.profile.findUnique({
+    where: { id: session.user.id }
+  });
 
-  if (profile.role === 'admin') {
-    return db.case.findMany({ include: { client: true, lawyer: true, paralegal: true, court_events: true }, orderBy: { created_at: 'desc' } })
-  } else if (profile.role === 'lawyer') {
-    return db.case.findMany({ 
-      where: { lawyer_id: user.id },
-      include: { client: true, lawyer: true, paralegal: true, court_events: true },
-      orderBy: { created_at: 'desc' }
-    })
-  } else if (profile.role === 'paralegal') {
-    return db.case.findMany({ 
-      where: { paralegal_id: user.id },
-      include: { client: true, lawyer: true, paralegal: true, court_events: true },
-      orderBy: { created_at: 'desc' }
-    })
-  }
-  
-  return []
-}
-
-export async function getCase(id: string) {
-  const supabase = await createClient()
-  const { data: { user }, error } = await supabase.auth.getUser()
-  
-  if (error || !user) throw new Error('Unauthorized')
-
-  const caseItem = await db.case.findUnique({
-    where: { id },
-    include: { client: true, lawyer: true, paralegal: true }
-  })
-  
-  if (!caseItem) throw new Error('Case not found')
-
-  // Access check
-  const profile = await db.profile.findUnique({ where: { id: user.id } })
-  if (profile?.role !== 'admin' && caseItem.lawyer_id !== user.id && caseItem.paralegal_id !== user.id && caseItem.client_id !== user.id) {
-    throw new Error('Forbidden')
+  if (!profile) {
+    throw new Error("Profile not found");
   }
 
-  return caseItem
+  if (!profile.firm_id) throw new Error("Firm not found for user");
+  return { userId: profile.id, firmId: profile.firm_id, role: profile.role };
 }
 
-export type CreateCaseInput = {
-  title: string
-  client_id: string
-  lawyer_id: string
-  paralegal_id?: string | null
-  status: CaseStatus
-  risk_level?: RiskLevel | null
-  internal_notes?: string | null
-}
-
-export async function createCase(data: CreateCaseInput) {
-  const supabase = await createClient()
-  const { data: { user }, error } = await supabase.auth.getUser()
-  
-  if (error || !user) throw new Error('Unauthorized')
-
-  const profile = await db.profile.findUnique({ where: { id: user.id } })
-  if (profile?.role !== 'admin') throw new Error('Forbidden: Only admins can create cases')
-
-  const newCase = await db.case.create({
-    data
-  })
-  
-  revalidatePath('/workspace')
-  revalidatePath('/manager')
-  return newCase
-}
-
-import { evaluateCaseRisk } from '../engine/situation-engine'
-
-export async function updateCase(id: string, data: Partial<CreateCaseInput>) {
-  const supabase = await createClient()
-  const { data: { user }, error } = await supabase.auth.getUser()
-  
-  if (error || !user) throw new Error('Unauthorized')
-
-  const caseItem = await db.case.findUnique({ where: { id } })
-  if (!caseItem) throw new Error('Case not found')
-
-  const profile = await db.profile.findUnique({ where: { id: user.id } })
-  if (profile?.role !== 'admin' && caseItem.lawyer_id !== user.id) {
-    throw new Error('Forbidden: Insufficient permissions to update case')
-  }
-
-  const updated = await db.case.update({
-    where: { id },
-    data
-  })
-  
-  // Trigger Deep Sync for Situation Engine
-  await evaluateCaseRisk(id).catch(err => console.error('Failed to evaluate risk:', err))
-
-  revalidatePath('/workspace')
-  revalidatePath(`/workspace/cases/${id}`)
-  revalidatePath('/manager')
-  return updated
-}
-
-export async function deleteCase(id: string) {
-  const supabase = await createClient()
-  const { data: { user }, error } = await supabase.auth.getUser()
-  
-  if (error || !user) throw new Error('Unauthorized')
-  
-  const profile = await db.profile.findUnique({ where: { id: user.id } })
-  if (profile?.role !== 'admin') throw new Error('Forbidden: Only admins can delete cases')
-
-  await db.$transaction(async (tx) => {
-    await tx.task.deleteMany({ where: { case_id: id } })
-    await tx.timelineEvent.deleteMany({ where: { case_id: id } })
-    await tx.courtEvent.deleteMany({ where: { case_id: id } })
-    await tx.document.deleteMany({ where: { case_id: id } })
-    await tx.documentRequest.deleteMany({ where: { case_id: id } })
-    await tx.case.delete({ where: { id } })
-  })
-  
-  revalidatePath('/workspace')
-  revalidatePath('/manager')
-}
-
+/**
+ * ----------------------------------------------------
+ * Schemas
+ * ----------------------------------------------------
+ */
 const createMatterSchema = z.object({
-  title: z.string().min(1, 'Title is required'),
+  title: z.string().min(3, "Title must be at least 3 characters"),
+  client_id: z.string().optional(),
+  client_name: z.string().optional(),
+  client_email: z.string().email().optional(),
+  client_phone: z.string().optional(),
+  client_passport: z.string().optional(),
+  client_emirates_id: z.string().optional(),
+  case_type: z.string().min(1, "Case type is required"),
+  risk_level: z.enum(['green', 'amber', 'red', 'critical']).default('green'),
   description: z.string().optional(),
-  client_id: z.string().uuid().optional(),
-  new_client: z.object({
-    name: z.string().min(1, 'Client name is required'),
-    email: z.string().email('Invalid client email'),
-    phone: z.string().optional(),
-    password: z.string().optional()
-  }).optional(),
-  lawyer_id: z.string().uuid('Lead Attorney must be a valid UUID').optional().nullable(),
-  paralegal_id: z.string().uuid().optional().nullable(),
-  risk_level: z.enum(['low', 'medium', 'high']).optional().nullable(),
-  case_type: z.string().min(1, 'Case Type is required').default('Civil Litigation'),
-  status: z.enum(['open', 'closed', 'pending']).default('open')
-}).refine(data => data.client_id || data.new_client, {
-  message: 'Must provide either client_id or new_client',
-  path: ['client_id']
-})
+  lawyer_id: z.string().optional(),
+  paralegal_id: z.string().optional(),
+});
 
+/**
+ * ----------------------------------------------------
+ * Case Creation (A-to-Z Intact Loop)
+ * ----------------------------------------------------
+ */
 export async function createMatter(data: z.infer<typeof createMatterSchema>) {
-  const supabase = await createClient()
-  const { data: { user }, error } = await supabase.auth.getUser()
-  if (error || !user) throw new Error('Unauthorized')
-
-  const profile = await db.profile.findUnique({ where: { id: user.id } })
-  if (!profile || (profile.role !== 'admin' && profile.role !== 'lawyer')) {
-    throw new Error('Forbidden: Only admins and lawyers can perform this manager action')
-  }
-
-  const parsed = createMatterSchema.parse(data)
-  
-  let finalClientId = parsed.client_id
-  if (!finalClientId && parsed.new_client) {
-    // 1. Check if client already exists (e.g. from a previously failed matter creation attempt)
-    const existingClient = await db.client.findUnique({ where: { email: parsed.new_client.email } })
-    
-    if (existingClient) {
-      finalClientId = existingClient.id;
-    } else {
-      // 2. Create new Auth User and Client Record
-      const { supabaseAdmin } = await import('@/lib/supabase/admin')
-      const { data: authData, error: createError } = await supabaseAdmin.auth.admin.createUser({
-        email: parsed.new_client.email,
-        password: parsed.new_client.password || Math.random().toString(36).slice(-10) + 'A1!',
-        email_confirm: true,
-        user_metadata: {
-          name: parsed.new_client.name,
-          is_client: true,
-        }
-      })
-
-      if (createError || !authData.user) {
-        throw new Error(`Failed to create client auth user: ${createError?.message}`)
-      }
-
-      const newClient = await db.client.create({
-        data: {
-          id: authData.user.id,
-          name: parsed.new_client.name,
-          email: parsed.new_client.email,
-          phone: parsed.new_client.phone
-        }
-      })
-      finalClientId = newClient.id
-    }
-  }
-
-  const textToEmbed = `${parsed.title}\n\n${parsed.description || ''}`
-  let embeddingVector: number[] | null = null
   try {
-    const response = await ai.models.embedContent({
-      model: 'text-embedding-004',
-      contents: textToEmbed,
-    })
-    if (response.embeddings && response.embeddings.length > 0) {
-      embeddingVector = response.embeddings[0].values || null
-    }
-  } catch (err) {
-    console.error('Embedding failed', err)
-  }
+    const { userId, firmId } = await requireAuthAndFirm();
+    const parsed = createMatterSchema.parse(data);
 
-  let caseId = crypto.randomUUID();
-  try {
-    if (embeddingVector) {
-      const embeddingStr = `[${embeddingVector.join(',')}]`
-      await db.$executeRaw`
-        INSERT INTO "Case" (
-          id, title, status, client_id, lawyer_id, paralegal_id, 
-          risk_level, case_type, current_phase, next_action, internal_notes, embedding, created_at, updated_at, version
-        )
-        VALUES (
-          ${caseId}::uuid,
-          ${parsed.title},
-          ${parsed.status}::"CaseStatus",
-          ${finalClientId}::uuid,
-          ${parsed.lawyer_id || null}::uuid,
-          ${parsed.paralegal_id ? parsed.paralegal_id : null}::uuid,
-          ${parsed.risk_level ? parsed.risk_level : null}::"RiskLevel",
-          ${parsed.case_type},
-          '1. Intake & Conflict Check',
-          'Collect KYC / Conflict Check',
-          ${parsed.description || null},
-          CAST(${embeddingStr}::text AS vector),
-          NOW(),
-          NOW(),
-          1
-        )
-      `
-    } else {
-      await db.case.create({
-        data: {
-          id: caseId,
-          title: parsed.title,
-          status: parsed.status as any,
-          client_id: finalClientId!,
-          lawyer_id: parsed.lawyer_id,
-          paralegal_id: parsed.paralegal_id,
-          risk_level: parsed.risk_level as any,
-          case_type: parsed.case_type,
-          current_phase: '1. Intake & Conflict Check',
-          next_action: 'Collect KYC / Conflict Check',
-          internal_notes: parsed.description
+    // 1. Resolve Client
+    let finalClientId = parsed.client_id;
+    if (finalClientId) {
+      const existingClient = await db.client.findUnique({
+        where: { id: finalClientId }
+      });
+      if (!existingClient || existingClient.firm_id !== firmId) {
+        throw new Error("Invalid client ID. Client does not exist or does not belong to your firm.");
+      }
+    } else if (parsed.client_name && parsed.client_email) {
+      const existingClient = await db.client.findFirst({
+        where: { firm_id: firmId, email: parsed.client_email }
+      });
+
+      if (existingClient) {
+        finalClientId = existingClient.id;
+      } else {
+        // Provision the user as a client, giving them full portal access
+        await provisionUser({
+          name: parsed.client_name,
+          email: parsed.client_email,
+          phone: parsed.client_phone || '',
+          passport_number: parsed.client_passport || '',
+          emirates_id: parsed.client_emirates_id || '',
+          role: 'client'
+        });
+
+        // Fetch the newly created client record
+        const newlyCreatedClient = await db.client.findFirst({
+          where: { firm_id: firmId, email: parsed.client_email }
+        });
+
+        if (newlyCreatedClient) {
+          finalClientId = newlyCreatedClient.id;
         }
-      })
+      }
     }
 
-    // Create initial timeline event
-    await db.timelineEvent.create({
-      data: {
-        case_id: caseId,
-        event_date: new Date(),
-        title: 'Matter Created & Intake Started',
-        description: 'The matter was successfully created and assigned. Phase set to Intake.',
-      }
-    })
-
-    // [AUTOMATION ENGINE] Auto-Spawn KYC Task
-    const assignee = parsed.lawyer_id || parsed.paralegal_id || user.id;
-    await db.task.create({
-      data: {
-        title: "Collect KYC",
-        description: "Automated Task: Collect Client Passport and Emirates ID to advance to the next phase.",
-        status: "pending",
-        due_date: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000), // Due in 48 hours
-        case_id: caseId,
-        assignee_id: assignee,
-      }
-    })
-  } catch (dbErr: any) {
-    console.error("DB INSERTION ERROR:", dbErr);
-    throw new Error(`Database error during matter creation: ${dbErr?.message}`);
-  }
-
-  revalidatePath('/workspace')
-  revalidatePath('/manager')
-  return { success: true, id: caseId }
-}
-
-export async function assignLeadAttorney(caseId: string, lawyerId: string) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) throw new Error("Unauthorized")
-
-  await db.case.update({
-    where: { id: caseId },
-    data: { lawyer_id: lawyerId }
-  })
-
-  // Create timeline event for assignment
-  await db.timelineEvent.create({
-    data: {
-      case_id: caseId,
-      event_date: new Date(),
-      title: 'Lead Attorney Assigned',
-      description: 'A lead attorney has been assigned to this matter.',
-      client_visible: false
+    if (!finalClientId) {
+      throw new Error("Client resolution failed. Provide an existing client or valid details to create one.");
     }
-  })
 
-  revalidatePath('/workspace')
-  revalidatePath('/manager')
-  return { success: true }
-}
+    // 2. Generate Case Code & Create Case with Retry
+    let newCase;
+    let retries = 0;
+    while (retries < 3) {
+      try {
+        const count = await db.case.count({ where: { firm_id: firmId } });
+        // Add random suffix if retrying to avoid race conditions
+        const case_code = `MAT-${new Date().getFullYear()}-${String(count + 1 + retries).padStart(4, '0')}`;
+        const caseId = crypto.randomUUID();
 
-export async function advanceCasePhase(caseId: string, newPhase: string) {
-  const supabase = await createClient()
-  const { data: { user }, error } = await supabase.auth.getUser()
-  if (error || !user) throw new Error('Unauthorized')
-
-  const caseData = await db.case.findUnique({ where: { id: caseId } })
-  if (!caseData) throw new Error('Case not found')
-
-  const profile = await db.profile.findUnique({ where: { id: user.id } })
-  if (profile?.role !== 'admin' && caseData.lawyer_id !== user.id) {
-    throw new Error('Forbidden: Insufficient permissions to advance phase')
-  }
-
-  const updatedCase = await db.case.update({
-    where: { id: caseId },
-    data: { current_phase: newPhase }
-  })
-
-  // Deep Sync evaluation
-  await evaluateCaseRisk(caseId).catch(err => console.error('Failed risk evaluation', err))
-
-  // Create Timeline Event
-  await db.timelineEvent.create({
-    data: {
-      case_id: caseId,
-      event_date: new Date(),
-      title: `Advanced to ${newPhase.toUpperCase()}`,
-      description: `The matter phase was advanced to ${newPhase}.`,
-    }
-  })
-
-  // Auto-Spawn standard tasks based on phase
-  if ((newPhase.toLowerCase() === 'active' || newPhase.toLowerCase() === 'litigation') && caseData.lawyer_id) {
-    await db.task.create({
-      data: {
-        title: 'Draft Retainer & Strategy Document',
-        description: 'Auto-generated standard task for active cases.',
-        case_id: caseId,
-        assignee_id: caseData.lawyer_id,
-        status: 'pending',
-        due_date: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000)
+        newCase = await db.case.create({
+          data: {
+            id: caseId,
+            firm_id: firmId,
+            client_id: finalClientId,
+            case_code,
+            title: parsed.title,
+            case_type: parsed.case_type,
+            current_status: 'open',
+            risk_level: parsed.risk_level,
+            created_by: userId,
+          }
+        });
+        break; // Success
+      } catch (e: any) {
+        if (e.code === 'P2002') { // Unique constraint violation (race condition)
+          retries++;
+          continue;
+        }
+        throw e;
       }
-    })
-  }
+    }
 
-  revalidatePath('/workspace')
-  revalidatePath(`/workspace/cases/${caseId}`)
-  revalidatePath('/manager')
-  return updatedCase
+    if (!newCase) {
+      throw new Error("Failed to generate a unique case code after multiple attempts. Please try again.");
+    }
+    const caseId = newCase.id;
+
+    // 4. Create Case Assignments
+    const assignments = [];
+    if (parsed.lawyer_id) {
+      const lawyer = await db.profile.findUnique({ where: { id: parsed.lawyer_id } });
+      if (!lawyer || lawyer.firm_id !== firmId) throw new Error("Lawyer not in firm");
+      assignments.push({
+        firm_id: firmId,
+        case_id: caseId,
+        user_id: parsed.lawyer_id,
+        assignment_role: 'lead_lawyer',
+      });
+    }
+    if (parsed.paralegal_id) {
+      const paralegal = await db.profile.findUnique({ where: { id: parsed.paralegal_id } });
+      if (!paralegal || paralegal.firm_id !== firmId) throw new Error("Paralegal not in firm");
+      assignments.push({
+        firm_id: firmId,
+        case_id: caseId,
+        user_id: parsed.paralegal_id,
+        assignment_role: 'paralegal',
+      });
+    }
+
+    if (assignments.length > 0) {
+      await db.caseAssignment.createMany({ data: assignments });
+    }
+
+    // 5. UAE Law Task Generation
+    const { generateTasksForMatter } = await import('../engine/uae-law-engine');
+    const primaryAssignee = parsed.lawyer_id || parsed.paralegal_id;
+    await generateTasksForMatter(caseId, parsed.case_type, firmId, userId, primaryAssignee);
+
+    // 6. Fire Workflow Engine
+    await runCaseCreationTriggers(caseId, parsed.case_type, firmId, parsed.lawyer_id);
+
+    revalidatePath('/workspace');
+    revalidatePath('/manager/dashboard');
+    return { success: true, caseId: newCase.id };
+
+  } catch (error: any) {
+    console.error("Failed to create matter:", error);
+    return { success: false, error: error.message };
+  }
 }
 
+/**
+ * ----------------------------------------------------
+ * Retrieve Manager Dashboard Data
+ * ----------------------------------------------------
+ */
 export async function getManagerDashboardData() {
-  const supabase = await createClient()
-  const { data: { user }, error } = await supabase.auth.getUser()
-  if (error || !user) throw new Error('Unauthorized')
+  const { userId, firmId } = await requireAuthAndFirm();
 
-  const profile = await db.profile.findUnique({ where: { id: user.id } })
-  if (!profile) throw new Error('Forbidden')
-
-  let cases
-  if (profile.role === 'admin') {
-    cases = await db.case.findMany({
+  const [cases, timelineEvents] = await Promise.all([
+    db.case.findMany({
+      where: { firm_id: firmId },
       include: {
         client: true,
-        lawyer: true,
-        tasks: {
-          where: { status: { not: 'completed' } },
-          orderBy: { due_date: 'asc' }
+        assignments: {
+          include: {
+            user: true
+          }
         },
-        court_events: {
-          where: { event_date: { gte: new Date() } },
-          orderBy: { event_date: 'asc' }
-        },
-        timeline_events: {
-          where: { event_date: { gte: new Date() } },
-          orderBy: { event_date: 'asc' }
-        }
+        tasks: true,
+        documents: true,
+        court_events: true
       },
-      orderBy: { updated_at: 'desc' }
-    })
-  } else if (profile.role === 'lawyer') {
-    cases = await db.case.findMany({
-      where: { lawyer_id: user.id },
+      orderBy: { created_at: 'desc' }
+    }),
+    db.timelineEvent.findMany({
+      where: { firm_id: firmId },
       include: {
-        client: true,
-        lawyer: true,
-        tasks: {
-          where: { status: { not: 'completed' } },
-          orderBy: { due_date: 'asc' }
-        },
-        court_events: {
-          where: { event_date: { gte: new Date() } },
-          orderBy: { event_date: 'asc' }
-        },
-        timeline_events: {
-          where: { event_date: { gte: new Date() } },
-          orderBy: { event_date: 'asc' }
-        }
+        case: { select: { title: true, case_code: true } },
+        actor: { select: { full_name: true, role: true } }
       },
-      orderBy: { updated_at: 'desc' }
+      orderBy: { created_at: 'desc' },
+      take: 25
     })
-  } else {
-    throw new Error('Forbidden: Insufficient permissions for manager dashboard')
-  }
+  ]);
 
-  return cases.map(c => {
-    // Find nearest deadline from tasks, court events, or timeline
-    let upcomingDeadline: Date | null = null
-    const nextTaskDate = c.tasks[0]?.due_date
-    const nextEventDate = c.court_events[0]?.event_date
-    const nextTimelineDate = c.timeline_events[0]?.event_date
-
-    const dates = [nextTaskDate, nextEventDate, nextTimelineDate].filter((d): d is Date => d != null)
-    if (dates.length > 0) {
-      upcomingDeadline = new Date(Math.min(...dates.map(d => d.getTime())))
-    }
-
-    // Map Prisma RiskLevel to RiskLevel UI string
-    const canViewRisk = profile.role === 'admin' || profile.role === 'lawyer'
-    let riskLevel: 'Green' | 'Amber' | 'Red' | 'Critical' = 'Green'
-    
-    if (canViewRisk) {
-      if (c.risk_level === 'low') riskLevel = 'Green'
-      else if (c.risk_level === 'medium') riskLevel = 'Amber'
-      else if (c.risk_level === 'high') riskLevel = 'Red'
-      else riskLevel = 'Green'
-    }
+  // Re-map the structure so the frontend logic doesn't break
+  const mappedCases = cases.map(c => {
+    const leadLawyerAssign = c.assignments.find(a => a.assignment_role === 'lead_lawyer' || a.user.role === 'lawyer');
+    const paralegalAssign = c.assignments.find(a => a.assignment_role === 'paralegal' || a.user.role === 'paralegal');
 
     return {
-      id: c.id,
-      matterName: c.title,
-      client: c.client.name,
-      leadAttorney: c.lawyer?.name || 'Unassigned',
-      riskLevel,
-      upcomingDeadline: upcomingDeadline ? upcomingDeadline.toISOString() : 'No upcoming deadline',
-      budgetStatus: Math.floor(Math.random() * 100), // Placeholder for now
-      lastUpdated: c.updated_at.toISOString(),
-      // Adding progress info just in case
-      tasksProgress: c.tasks.length > 0 ? Math.round(((c.tasks.filter(t => t.status === 'completed').length) / c.tasks.length) * 100) : 0,
+      ...c,
+      lawyer: leadLawyerAssign ? leadLawyerAssign.user : null,
+      paralegal: paralegalAssign ? paralegalAssign.user : null,
+      overdue_tasks: c.tasks.filter(t => t.due_at && t.due_at < new Date() && t.status !== 'completed').length,
+    };
+  });
+
+  return {
+    success: true,
+    data: {
+      metrics: {
+        totalActive: mappedCases.filter(c => c.current_status !== 'closed').length,
+        criticalRisk: mappedCases.filter(c => c.risk_level === 'critical' || c.risk_level === 'red').length,
+        pendingClientDocs: mappedCases.reduce((acc, c) => acc + c.documents.filter(d => d.review_status === 'pending').length, 0),
+        upcomingHearings: mappedCases.reduce((acc, c) => acc + c.court_events.filter(e => e.event_at && e.event_at > new Date()).length, 0)
+      },
+      cases: mappedCases,
+      timelineEvents
     }
-  })
+  };
 }
 
-export async function updateMatterPhase(caseId: string, newPhase: string) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) throw new Error('Unauthorized')
+/**
+ * ----------------------------------------------------
+ * Get A Single Case Details
+ * ----------------------------------------------------
+ */
+export async function getCase(id: string) {
+  const { firmId } = await requireAuthAndFirm();
 
-  const profile = await db.profile.findUnique({ where: { id: user.id } })
-  if (!profile || (profile.role !== 'admin' && profile.role !== 'lawyer')) {
-    throw new Error('Forbidden: Insufficient permissions to move phase')
-  }
+  const caseRecord = await db.case.findUnique({
+    where: { id, firm_id: firmId },
+    include: {
+      client: true,
+      assignments: {
+        include: { user: true }
+      },
+      timeline_events: { orderBy: { created_at: 'desc' } },
+      tasks: { orderBy: { due_at: 'asc' }, include: { assignee: true } },
+      court_events: { orderBy: { event_at: 'asc' } },
+      documents: { orderBy: { created_at: 'desc' } }
+    }
+  });
 
-  try {
-    const updated = await db.case.update({
-      where: { id: caseId },
-      data: { current_phase: newPhase }
-    })
-    
-    // Add timeline event to track the phase change
-    await db.timelineEvent.create({
-      data: {
-        case_id: caseId,
-        event_date: new Date(),
-        title: 'Phase Updated',
-        description: `Matter progressed to: ${newPhase}`,
-      }
-    })
+  if (!caseRecord) return null;
 
-    revalidatePath('/workspace')
-    revalidatePath(`/workspace/cases/${caseId}`)
-    return { success: true, case: updated }
-  } catch (err: any) {
-    console.error("Phase update failed:", err)
-    throw new Error(`Failed to update phase: ${err.message}`)
-  }
+  const leadLawyerAssign = caseRecord.assignments.find(a => a.assignment_role === 'lead_lawyer' || a.user.role === 'lawyer');
+  const paralegalAssign = caseRecord.assignments.find(a => a.assignment_role === 'paralegal' || a.user.role === 'paralegal');
+
+  return {
+    ...caseRecord,
+    lawyer: leadLawyerAssign ? leadLawyerAssign.user : null,
+    paralegal: paralegalAssign ? paralegalAssign.user : null,
+  };
 }
 
 export async function submitKYCForm(clientId: string, taskId: string, caseId: string, data: { passport_number: string, emirates_id: string }) {
-  const supabase = await createClient()
-  const { data: { user }, error } = await supabase.auth.getUser()
-  if (error || !user) throw new Error('Unauthorized')
+  try {
+    const { firmId, userId } = await requireAuthAndFirm();
 
-  // 1. Update the Client Record with KYC Data
-  await db.client.update({
-    where: { id: clientId },
-    data: {
-      passport_number: data.passport_number,
-      emirates_id: data.emirates_id,
+    const client = await db.client.findUnique({ where: { id: clientId } });
+    if (!client || client.firm_id !== firmId) throw new Error("Unauthorized client update");
+
+    const task = await db.task.findUnique({ where: { id: taskId } });
+    if (!task || task.firm_id !== firmId) throw new Error("Unauthorized task update");
+    if (task.case_id !== caseId) throw new Error("Task does not belong to case");
+
+    const caseRecord = await db.case.findUnique({ where: { id: caseId } });
+    if (!caseRecord || caseRecord.firm_id !== firmId) throw new Error("Case not found");
+
+    await db.client.update({
+      where: { id: clientId },
+      data: {
+        passport_number: data.passport_number,
+        emirates_id: data.emirates_id
+      }
+    });
+
+    await db.task.update({
+      where: { id: taskId, firm_id: firmId },
+      data: {
+        status: 'completed',
+        completed_at: new Date()
+      }
+    });
+
+    await db.timelineEvent.create({
+      data: {
+        firm_id: firmId,
+        case_id: caseId,
+        actor_user_id: userId,
+        actor_type: 'paralegal',
+        event_type: 'KYC_UPDATED',
+        title: 'KYC Documents Processed',
+        description: 'Passport and ID details have been logged into the system.',
+      }
+    });
+
+    revalidatePath(`/workspace/cases/${caseId}`);
+    return { success: true };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+}
+
+export async function advanceCasePhase(caseId: string, newPhase: string) {
+  try {
+    const { firmId, userId, role } = await requireAuthAndFirm();
+
+    const normalizedRole = role.toLowerCase();
+    if (!['admin', 'manager', 'owner', 'managing_partner'].includes(normalizedRole)) {
+      throw new Error(`Unauthorized: Role '${role}' cannot advance case phases. Only admins or managers are permitted.`);
     }
-  })
 
-  // 2. Mark the KYC Task as Completed
-  await db.task.update({
-    where: { id: taskId },
-    data: { status: 'completed' }
-  })
+    await db.case.update({
+      where: { id: caseId, firm_id: firmId },
+      data: { current_phase: newPhase, last_movement_at: new Date() }
+    });
 
-  // 3. Auto-Advance Phase to "2. Onboarding & Doc Collection"
-  await db.case.update({
-    where: { id: caseId },
-    data: {
-      current_phase: '2. Onboarding & Doc Collection',
-      next_action: 'Collect Required Documents',
+    await db.timelineEvent.create({
+      data: {
+        firm_id: firmId,
+        case_id: caseId,
+        actor_user_id: userId,
+        actor_type: 'lawyer',
+        event_type: 'PHASE_CHANGED',
+        title: 'Matter Phase Advanced',
+        description: `Matter was moved to Phase: ${newPhase}`,
+      }
+    });
+
+    revalidatePath(`/workspace/cases/${caseId}`);
+    return { success: true };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+}
+export async function updateMatterPhase(caseId: string, newPhase: string) {
+  return advanceCasePhase(caseId, newPhase);
+}
+
+export async function getCases() {
+  const { firmId } = await requireAuthAndFirm();
+
+  const cases = await db.case.findMany({
+    where: { firm_id: firmId },
+    include: {
+      client: true,
+      assignments: {
+        include: { user: true }
+      },
+      tasks: true,
+      documents: true,
+      court_events: true
+    },
+    orderBy: { created_at: 'desc' }
+  });
+
+  return cases.map(c => {
+    const leadLawyerAssign = c.assignments.find(a => a.assignment_role === 'lead_lawyer' || a.user.role === 'lawyer');
+    const paralegalAssign = c.assignments.find(a => a.assignment_role === 'paralegal' || a.user.role === 'paralegal');
+
+    return {
+      ...c,
+      lawyer: leadLawyerAssign ? leadLawyerAssign.user : null,
+      paralegal: paralegalAssign ? paralegalAssign.user : null,
+    };
+  });
+}
+
+export async function closeCaseManually(caseId: string) {
+  try {
+    const { firmId, userId, role } = await requireAuthAndFirm();
+
+    const normalizedRole = role.toLowerCase();
+    if (!['admin', 'manager', 'owner', 'managing_partner'].includes(normalizedRole)) {
+      throw new Error(`Unauthorized: Role '${role}' cannot close matters manually.`);
     }
-  })
 
-  // 4. Log to timeline
-  await db.timelineEvent.create({
-    data: {
-      case_id: caseId,
-      event_date: new Date(),
-      title: 'KYC Completed automatically',
-      description: 'Client identity documents were submitted via the automated form. Phase advanced to Onboarding.',
+    await db.case.update({
+      where: { id: caseId, firm_id: firmId },
+      data: { current_status: 'closed' }
+    });
+
+    await db.timelineEvent.create({
+      data: {
+        firm_id: firmId,
+        case_id: caseId,
+        actor_user_id: userId,
+        actor_type: 'manager',
+        event_type: 'CASE_CLOSED_MANUALLY',
+        title: 'Matter Force Closed',
+        description: `Matter was manually archived and closed by the administrator.`,
+      }
+    });
+
+    revalidatePath(`/os/dashboard`);
+    revalidatePath(`/os/history`);
+    return { success: true };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+}
+
+export async function reopenCase(caseId: string) {
+  try {
+    const { firmId, userId, role } = await requireAuthAndFirm();
+
+    const normalizedRole = role.toLowerCase();
+    if (!['admin', 'manager', 'owner', 'managing_partner'].includes(normalizedRole)) {
+      throw new Error(`Unauthorized: Role '${role}' cannot reopen matters.`);
     }
-  })
 
-  revalidatePath('/workspace')
-  revalidatePath(`/workspace/cases/${caseId}`)
-  
-  return { success: true }
+    await db.case.update({
+      where: { id: caseId, firm_id: firmId },
+      data: { current_status: 'open' }
+    });
+
+    await db.timelineEvent.create({
+      data: {
+        firm_id: firmId,
+        case_id: caseId,
+        actor_user_id: userId,
+        actor_type: 'manager',
+        event_type: 'CASE_REOPENED',
+        title: 'Matter Re-opened',
+        description: `Matter was restored from archives and re-opened for execution.`,
+      }
+    });
+
+    revalidatePath(`/os/dashboard`);
+    revalidatePath(`/os/history`);
+    return { success: true };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
 }

@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 
 export type AuditLogInput = {
+  firmId: string;
   userId?: string;
   entityType: string;
   entityId: string;
@@ -15,6 +16,7 @@ export async function logAuditAction(input: AuditLogInput) {
   try {
     await db.auditLog.create({
       data: {
+        firm_id: input.firmId,
         user_id: input.userId,
         entity_type: input.entityType,
         entity_id: input.entityId,

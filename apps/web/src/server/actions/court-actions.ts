@@ -1,184 +1,201 @@
-'use server'
+'use server';
 
-import { db } from '@/lib/db'
-import { createClient } from '@/lib/supabase/server'
-import { EventType, TaskStatus, RiskLevel } from '@prisma/client'
-import { addDays } from 'date-fns'
-import { z } from 'zod'
+import { db } from '@/lib/db';
+import { createClient } from '@/lib/supabase/server';
 
-export async function getCourtEvents() {
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-  if (authError || !user) throw new Error('Unauthorized')
+export async function addCourtEvent(data: {
+  case_id: string;
+  event_type: string;
+  court_name: string;
+  event_at: string;
+  internal_notes?: string;
+}) {
+  try {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error("Unauthorized");
 
-  const profile = await db.profile.findUnique({
-    where: { id: user.id }
-  })
-  if (!profile) throw new Error('Profile not found')
+    const profile = await db.profile.findUnique({ where: { id: user.id } });
+    if (!profile) throw new Error("Profile not found");
 
-  if (profile.role === 'admin') {
-    return await db.courtEvent.findMany({
-      include: { case: true },
-      orderBy: { event_date: 'asc' }
-    })
-  }
+    const matter = await db.case.findUnique({
+      where: { id: data.case_id, firm_id: profile.firm_id }
+    });
 
-  // Only return events for cases this user is assigned to
-  return await db.courtEvent.findMany({
-    where: {
-      case: {
-        OR: [
-          { lawyer_id: user.id },
-          { paralegal_id: user.id }
-        ]
+    if (!matter) throw new Error("Matter not found");
+
+    const newEvent = await db.courtEvent.create({
+      data: {
+        firm_id: profile.firm_id,
+        case_id: matter.id,
+        event_type: data.event_type,
+        court_name: data.court_name,
+        event_at: new Date(data.event_at),
+        internal_notes: data.internal_notes,
+        created_by: profile.id
       }
-    },
-    include: { case: true },
-    orderBy: { event_date: 'asc' }
-  })
+    });
+
+    // Write to audit ledger
+    await db.auditLog.create({
+      data: {
+        firm_id: profile.firm_id,
+        user_id: profile.id,
+        entity_type: 'CourtEvent',
+        entity_id: newEvent.id,
+        action_type: 'create',
+        after_data: JSON.parse(JSON.stringify(newEvent))
+      }
+    });
+
+    await db.timelineEvent.create({
+      data: {
+        firm_id: profile.firm_id,
+        case_id: matter.id,
+        actor_user_id: profile.id,
+        actor_type: 'lawyer',
+        event_type: 'COURT_EVENT_LOGGED',
+        title: 'Court Event Scheduled',
+        description: `Scheduled ${data.event_type} at ${data.court_name} on ${new Date(data.event_at).toLocaleString()}`,
+      }
+    });
+
+    return { success: true, event: newEvent };
+  } catch (error: any) {
+    console.error("addCourtEvent error:", error);
+    return { success: false, error: error.message };
+  }
 }
 
-const createCourtEventSchema = z.object({
-  case_id: z.string().uuid(),
-  event_date: z.date(),
-  event_type: z.nativeEnum(EventType),
-  title: z.string().min(1),
-  description: z.string().optional(),
-  metadata: z.any().optional(),
-})
+export async function getCourtEvents() {
+  try {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error("Unauthorized");
 
-export type CreateCourtEventProps = z.infer<typeof createCourtEventSchema>
+    const profile = await db.profile.findUnique({ where: { id: user.id } });
+    if (!profile) throw new Error("Profile not found");
 
-/**
- * Automates all downstream actions when a new court event is logged.
- * - Creates the CourtEvent record.
- * - Broadcasts a TimelineEvent to the Client Portal.
- * - Spawns relevant tasks for the assigned Paralegal/Lawyer.
- * - Adjusts Risk Level based on rules.
- */
-export async function createCourtEvent(data: CreateCourtEventProps) {
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-  if (authError || !user) throw new Error('Unauthorized')
+    const events = await db.courtEvent.findMany({
+      where: { firm_id: profile.firm_id },
+      include: {
+        case: {
+          include: {
+            client: true
+          }
+        }
+      },
+      orderBy: { event_at: 'asc' }
+    });
 
-  const parsed = createCourtEventSchema.safeParse(data)
-  if (!parsed.success) throw new Error('Invalid input data')
-  const validData = parsed.data
-
-  const profile = await db.profile.findUnique({ where: { id: user.id } })
-  if (!profile || (profile.role !== 'admin' && profile.role !== 'lawyer' && profile.role !== 'paralegal')) {
-    throw new Error('Unauthorized role')
+    return { success: true, events };
+  } catch (error: any) {
+    console.error("getCourtEvents error:", error);
+    return { success: false, error: error.message };
   }
+}
 
-  // Execute all logic in a single atomic transaction
-  const result = await db.$transaction(async (tx) => {
-    // 1. Fetch case details to know who to assign tasks to
-    const caseData = await tx.case.findUnique({
-      where: { id: validData.case_id }
+export async function updateCourtEvent(eventId: string, data: {
+  event_type?: string;
+  court_name?: string;
+  event_at?: string;
+  internal_notes?: string;
+}) {
+  try {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error("Unauthorized");
+
+    const profile = await db.profile.findUnique({ where: { id: user.id } });
+    if (!profile) throw new Error("Profile not found");
+
+    const existingEvent = await db.courtEvent.findUnique({ where: { id: eventId, firm_id: profile.firm_id } });
+    if (!existingEvent) throw new Error("Court event not found");
+
+    const updateData: any = {};
+    if (data.event_type !== undefined) updateData.event_type = data.event_type;
+    if (data.court_name !== undefined) updateData.court_name = data.court_name;
+    if (data.event_at !== undefined) updateData.event_at = new Date(data.event_at);
+    if (data.internal_notes !== undefined) updateData.internal_notes = data.internal_notes;
+
+    const updatedEvent = await db.courtEvent.update({
+      where: { id: eventId },
+      data: updateData
     });
-    
-    if (!caseData) throw new Error("Case not found");
 
-    if (profile.role !== 'admin' && caseData.lawyer_id !== user.id && caseData.paralegal_id !== user.id) {
-      throw new Error('Unauthorized: You are not assigned to this case')
-    }
-
-    // 2. Create the Court Event
-    const courtEvent = await tx.courtEvent.create({
+    await db.auditLog.create({
       data: {
-        case_id: validData.case_id,
-        event_date: validData.event_date,
-        event_type: validData.event_type,
-        title: validData.title,
-        description: validData.description,
-        metadata: validData.metadata || {}
+        firm_id: profile.firm_id,
+        user_id: profile.id,
+        entity_type: 'CourtEvent',
+        entity_id: updatedEvent.id,
+        action_type: 'update',
+        before_data: JSON.parse(JSON.stringify(existingEvent)),
+        after_data: JSON.parse(JSON.stringify(updatedEvent))
       }
     });
 
-    // 3. Auto-publish a Client-Visible Timeline Event
-    await tx.timelineEvent.create({
+    await db.timelineEvent.create({
       data: {
-        case_id: validData.case_id,
-        event_date: validData.event_date,
-        title: `Court Update: ${validData.title}`,
-        description: validData.description,
-        client_visible: true
+        firm_id: profile.firm_id,
+        case_id: updatedEvent.case_id!,
+        actor_user_id: profile.id,
+        actor_type: 'lawyer',
+        event_type: 'COURT_EVENT_UPDATED',
+        title: 'Court Event Updated',
+        description: `Updated event: ${updatedEvent.event_type}`,
       }
     });
 
-    // 4. Matrix Rules based on Event Type
-    const tasksToCreate = [];
-    let riskUpdate: RiskLevel | undefined = undefined;
+    return { success: true, event: updatedEvent };
+  } catch (error: any) {
+    console.error("updateCourtEvent error:", error);
+    return { success: false, error: error.message };
+  }
+}
 
-    switch (validData.event_type) {
-      case 'Adjournment':
-        // If adjourned, spawn task for Paralegal to get new dates
-        if (caseData.paralegal_id) {
-          tasksToCreate.push({
-            case_id: validData.case_id,
-            assignee_id: caseData.paralegal_id,
-            title: 'Reschedule Adjourned Hearing',
-            description: `Follow up with clerk to get new dates for ${validData.title}`,
-            due_date: addDays(new Date(), 2),
-            status: TaskStatus.pending
-          });
-        }
-        riskUpdate = RiskLevel.medium; // Adjournments elevate risk slightly
-        break;
+export async function deleteCourtEvent(eventId: string) {
+  try {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error("Unauthorized");
 
-      case 'Hearing':
-        // Pre-hearing prep task for lawyer
-        tasksToCreate.push({
-          case_id: validData.case_id,
-          assignee_id: caseData.lawyer_id,
-          title: 'Prepare Hearing Arguments',
-          description: `Review documents for upcoming hearing: ${validData.title}`,
-          due_date: addDays(validData.event_date, -3),
-          status: TaskStatus.pending
-        });
-        
-        // Post-hearing filing task for paralegal
-        if (caseData.paralegal_id) {
-          tasksToCreate.push({
-            case_id: validData.case_id,
-            assignee_id: caseData.paralegal_id,
-            title: 'File Hearing Summary Notes',
-            description: `Digitize lawyer notes from hearing: ${validData.title}`,
-            due_date: addDays(validData.event_date, 1),
-            status: TaskStatus.pending
-          });
-        }
-        break;
+    const profile = await db.profile.findUnique({ where: { id: user.id } });
+    if (!profile) throw new Error("Profile not found");
 
-      case 'Trial':
-        riskUpdate = RiskLevel.high; // Trials are automatically high risk
-        tasksToCreate.push({
-          case_id: validData.case_id,
-          assignee_id: caseData.lawyer_id,
-          title: 'Final Trial Preparation',
-          description: `Comprehensive trial review. Ensure all evidence vectors are mapped.`,
-          due_date: addDays(validData.event_date, -7),
-          status: TaskStatus.pending
-        });
-        break;
-    }
+    const existingEvent = await db.courtEvent.findUnique({ where: { id: eventId, firm_id: profile.firm_id } });
+    if (!existingEvent) throw new Error("Court event not found");
 
-    // Insert Tasks
-    const validTasks = tasksToCreate.filter(t => t.assignee_id != null) as any[];
-    if (validTasks.length > 0) {
-      await tx.task.createMany({ data: validTasks });
-    }
+    await db.courtEvent.delete({
+      where: { id: eventId }
+    });
 
-    // Update Case Risk Level if rules fired
-    if (riskUpdate) {
-      await tx.case.update({
-        where: { id: validData.case_id },
-        data: { risk_level: riskUpdate }
-      });
-    }
+    await db.auditLog.create({
+      data: {
+        firm_id: profile.firm_id,
+        user_id: profile.id,
+        entity_type: 'CourtEvent',
+        entity_id: eventId,
+        action_type: 'delete',
+        before_data: JSON.parse(JSON.stringify(existingEvent))
+      }
+    });
 
-    return courtEvent;
-  });
+    await db.timelineEvent.create({
+      data: {
+        firm_id: profile.firm_id,
+        case_id: existingEvent.case_id!,
+        actor_user_id: profile.id,
+        actor_type: 'lawyer',
+        event_type: 'COURT_EVENT_DELETED',
+        title: 'Court Event Deleted',
+        description: `Deleted event: ${existingEvent.event_type}`,
+      }
+    });
 
-  return result;
+    return { success: true };
+  } catch (error: any) {
+    console.error("deleteCourtEvent error:", error);
+    return { success: false, error: error.message };
+  }
 }

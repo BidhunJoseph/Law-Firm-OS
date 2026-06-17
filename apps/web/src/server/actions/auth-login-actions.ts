@@ -25,33 +25,15 @@ export async function loginUser(data: { email: string; password: string }) {
   })
 
   if (authError || !authData.user) {
+    console.error(`loginUser authError for ${parsed.data.email}:`, authError?.message);
     return { error: authError?.message || 'Invalid login credentials' }
   }
 
-  // Determine Role to auto-route
-  const user = authData.user;
-  
-  try {
-    const { db } = await import('@/lib/db');
-    const profile = await db.profile.findUnique({
-      where: { id: user.id }
-    });
+  // Because we boiled the ocean, EVERYONE goes to the Unified OS Dashboard.
+  let redirectUrl = '/os/dashboard';
 
-    let redirectUrl = '/client/portal'; // Fallback / default
-    if (profile) {
-      if (profile.role === 'admin') redirectUrl = '/manager/dashboard';
-      if (profile.role === 'lawyer') redirectUrl = '/workspace';
-      if (profile.role === 'paralegal') redirectUrl = '/paralegal/dashboard';
-    } else {
-      // If no profile, they might be a client in the Client table, but we default to client portal anyway
-      redirectUrl = '/client/portal';
-    }
-
-    return { success: true, redirectUrl };
-  } catch (err) {
-    console.error("Failed to lookup profile role, defaulting to client portal", err);
-    return { success: true, redirectUrl: '/client/portal' };
-  }
+  console.log(`loginUser returning success for ${parsed.data.email} with redirectUrl: ${redirectUrl}`);
+  return { success: true, redirectUrl };
 }
 
 export async function resetPassword(prevState: any, formData: FormData) {
@@ -73,36 +55,13 @@ export async function resetPassword(prevState: any, formData: FormData) {
     return { error: error.message }
   }
 
-  // Also update Prisma Profile to clear requires_password_reset
+  // Remove the attempt to update requires_password_reset since the DB schema does not have it.
   const { data: { user } } = await supabase.auth.getUser()
   if (user) {
-    await db.profile.update({
-      where: { id: user.id },
-      data: { requires_password_reset: false }
-    }).catch(() => {
-      // Ignore if no profile (e.g. they are a client)
-    })
+    // Just a placeholder if we need to do anything
   }
 
-  let redirectUrl = '/workspace'
-  if (user) {
-    try {
-      const profile = await db.profile.findUnique({
-        where: { id: user.id }
-      })
-      if (!profile) {
-        redirectUrl = '/client/portal'
-      } else if (profile.role === 'admin') {
-        redirectUrl = '/manager/dashboard'
-      } else if (profile.role === 'paralegal') {
-        redirectUrl = '/paralegal/dashboard'
-      }
-    } catch {
-      // ignore
-    }
-  }
-
-  redirect(redirectUrl)
+  redirect('/os/dashboard')
 }
 
 export async function logoutUser() {

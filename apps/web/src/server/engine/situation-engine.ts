@@ -1,19 +1,18 @@
 import 'server-only';
 import { db } from '@/lib/db';
-import type { RiskLevel } from '@prisma/client';
 
 /**
  * Case Situation Engine: Evaluates the Risk Level of a given case
  * based on the continuous vector scoring model ($S = \max(S_D, S_M, S_I)$).
  */
 
-export async function evaluateCaseRisk(caseId: string): Promise<RiskLevel> {
+export async function evaluateCaseRisk(caseId: string): Promise<string> {
   const caseData = await db.case.findUnique({
     where: { id: caseId },
     include: {
       court_events: {
-        where: { event_date: { gte: new Date() } },
-        orderBy: { event_date: 'asc' },
+        where: { event_at: { gte: new Date() } },
+        orderBy: { event_at: 'asc' },
         take: 1
       },
       document_requests: {
@@ -33,9 +32,11 @@ export async function evaluateCaseRisk(caseId: string): Promise<RiskLevel> {
   // 1. D: Days until next deadline
   let D = Infinity;
   if (caseData.court_events.length > 0) {
-    const nextEventDate = caseData.court_events[0].event_date;
-    const diffTime = nextEventDate.getTime() - now.getTime();
-    D = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    const nextEventDate = caseData.court_events[0].event_at;
+    if (nextEventDate) {
+      const diffTime = nextEventDate.getTime() - now.getTime();
+      D = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    }
   }
 
   // 2. M: Count of missing documents
@@ -66,7 +67,7 @@ export async function evaluateCaseRisk(caseId: string): Promise<RiskLevel> {
   // $S = \max(S_D, S_M, S_I)$
   const S = Math.max(SD, SM, SI);
 
-  let newRiskLevel: RiskLevel = 'low';
+  let newRiskLevel: string = 'low';
 
   if (S >= 50) newRiskLevel = 'high';
   else if (S >= 25) newRiskLevel = 'medium';

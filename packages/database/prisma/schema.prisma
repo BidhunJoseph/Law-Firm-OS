@@ -1,6 +1,5 @@
 generator client {
-  provider = "prisma-client-js"
-  engineType = "library"
+  provider        = "prisma-client-js"
   previewFeatures = ["postgresqlExtensions"]
 }
 
@@ -9,193 +8,276 @@ datasource db {
   extensions = [vector]
 }
 
-enum Role {
-  admin
-  lawyer
-  paralegal
-}
+model Firm {
+  id         String   @id @default(uuid()) @db.Uuid
+  name       String
+  created_at DateTime @default(now()) @db.Timestamptz
 
-enum CaseStatus {
-  open
-  closed
-  pending
-}
-
-enum RiskLevel {
-  low
-  medium
-  high
-}
-
-enum RequestStatus {
-  pending
-  fulfilled
-  rejected
-}
-
-enum TaskStatus {
-  pending
-  in_progress
-  completed
-}
-
-enum EventType {
-  Hearing
-  Trial
-  Adjournment
-  Motion
-  Conference
+  profiles              Profile[]
+  cases                 Case[]
+  case_assignments      CaseAssignment[]
+  clients               Client[]
+  court_events          CourtEvent[]
+  tasks                 Task[]
+  document_requests     DocumentRequest[]
+  documents             Document[]
+  external_agency_tasks ExternalAgencyTask[]
+  timeline_events       TimelineEvent[]
+  audit_logs            AuditLog[]
 }
 
 model Profile {
-  id         String   @id @default(uuid()) @db.Uuid
-  name       String
-  email      String   @unique
-  role       Role
-  requires_password_reset Boolean @default(true)
-  is_active  Boolean @default(true)
-  created_at DateTime @default(now())
-  updated_at DateTime @updatedAt
-  version    Int      @default(1)
+  id                      String   @id @db.Uuid // Matches auth.users(id)
+  firm_id                 String   @db.Uuid
+  full_name               String
+  email                   String   @unique
+  role                    String   // owner, managing_partner, manager, partner, lawyer, paralegal, client, external_agency
+  is_active               Boolean  @default(true)
+  created_at              DateTime @default(now()) @db.Timestamptz
 
-  cases_as_lawyer    Case[]     @relation("LawyerCases")
-  cases_as_paralegal Case[]     @relation("ParalegalCases")
-  uploaded_documents Document[]
-  assigned_tasks     Task[]
-  audit_logs         AuditLog[]
+  firm                    Firm     @relation(fields: [firm_id], references: [id])
+
+  case_assignments        CaseAssignment[]
+  next_action_cases       Case[]            @relation("CaseNextActionOwner")
+  created_cases           Case[]            @relation("CaseCreatedBy")
+  court_events_responsible CourtEvent[]     @relation("CourtEventResponsible")
+  court_events_created    CourtEvent[]      @relation("CourtEventCreatedBy")
+  court_events_verified   CourtEvent[]      @relation("CourtEventVerifiedBy")
+  tasks_assigned_by       Task[]            @relation("TaskAssignedBy")
+  tasks_assigned_to       Task[]            @relation("TaskAssignedTo")
+  doc_requests_from       DocumentRequest[] @relation("DocRequestedFrom")
+  doc_requests_by         DocumentRequest[] @relation("DocRequestedBy")
+  uploaded_documents      Document[]        @relation("DocUploadedBy")
+  external_tasks_lawyer   ExternalAgencyTask[] @relation("ExtTaskLawyer")
+  external_tasks_paralegal ExternalAgencyTask[] @relation("ExtTaskParalegal")
+  timeline_events         TimelineEvent[]
+  audit_logs              AuditLog[]
 }
 
 model Client {
-  id         String   @id @default(uuid()) @db.Uuid
-  name       String
+  id              String   @id @default(uuid()) @db.Uuid
+  firm_id         String   @db.Uuid
+  name            String
   email           String   @unique
   phone           String?
   passport_number String?
   emirates_id     String?
-  created_at DateTime @default(now())
-  updated_at DateTime @updatedAt
-  version    Int      @default(1)
+  created_at      DateTime @default(now()) @db.Timestamptz
 
+  firm  Firm   @relation(fields: [firm_id], references: [id])
   cases Case[]
 }
 
 model Case {
-  id              String     @id @default(uuid()) @db.Uuid
-  title           String
-  status          CaseStatus
-  client_id       String     @db.Uuid
-  lawyer_id       String?    @db.Uuid
-  paralegal_id    String?    @db.Uuid
-  risk_level      RiskLevel?
-  case_type       String     @default("Civil Litigation")
-  current_phase   String     @default("1. Intake & Conflict Check")
-  next_action     String?
-  internal_notes  String?
-  lawyer_comments String?
-  embedding       Unsupported("vector(768)")?
-  created_at      DateTime   @default(now())
-  updated_at      DateTime   @updatedAt
-  version         Int        @default(1)
+  id                 String    @id @default(uuid()) @db.Uuid
+  firm_id            String    @db.Uuid
+  client_id          String    @db.Uuid
+  case_code          String
+  title              String
+  case_type          String?   @default("Civil & Commercial")
+  current_phase      String    @default("intake")
+  current_status     String    @default("open")
+  risk_level         String    @default("green")
+  next_action        String?
+  next_action_owner  String?   @db.Uuid
+  next_action_due_at DateTime? @db.Timestamptz
+  blocked_by         String?   // lawyer, paralegal, court, client, external_agency, none
+  blocking_reason    String?
+  next_court_date    DateTime? @db.Timestamptz
+  last_movement_at   DateTime? @db.Timestamptz
+  closed_at          DateTime? @db.Timestamptz
+  created_by         String?   @db.Uuid
+  created_at         DateTime  @default(now()) @db.Timestamptz
+  updated_at         DateTime  @updatedAt @db.Timestamptz
 
-  client            Client            @relation(fields: [client_id], references: [id])
-  lawyer            Profile?          @relation("LawyerCases", fields: [lawyer_id], references: [id])
-  paralegal         Profile?          @relation("ParalegalCases", fields: [paralegal_id], references: [id])
-  document_requests DocumentRequest[]
-  documents         Document[]
-  court_events      CourtEvent[]
-  timeline_events   TimelineEvent[]
-  tasks             Task[]
+  firm               Firm      @relation(fields: [firm_id], references: [id])
+  client             Client    @relation(fields: [client_id], references: [id])
+  action_owner       Profile?  @relation("CaseNextActionOwner", fields: [next_action_owner], references: [id])
+  creator            Profile?  @relation("CaseCreatedBy", fields: [created_by], references: [id])
+
+  assignments           CaseAssignment[]
+  court_events          CourtEvent[]
+  tasks                 Task[]
+  document_requests     DocumentRequest[]
+  documents             Document[]
+  external_agency_tasks ExternalAgencyTask[]
+  timeline_events       TimelineEvent[]
+
+  @@unique([firm_id, case_code])
 }
 
-model DocumentRequest {
-  id          String        @id @default(uuid()) @db.Uuid
-  case_id     String        @db.Uuid
-  title       String
-  description String?
-  status      RequestStatus
-  created_at  DateTime      @default(now())
-  updated_at  DateTime      @updatedAt
-  version     Int           @default(1)
+model CaseAssignment {
+  id              String   @id @default(uuid()) @db.Uuid
+  firm_id         String   @db.Uuid
+  case_id         String   @db.Uuid
+  user_id         String   @db.Uuid
+  assignment_role String   // lead_lawyer, support_lawyer, paralegal, manager
+  active          Boolean  @default(true)
+  created_at      DateTime @default(now()) @db.Timestamptz
 
-  case      Case       @relation(fields: [case_id], references: [id], onDelete: Cascade)
-  documents Document[]
-}
-
-model Document {
-  id          String   @id @default(uuid()) @db.Uuid
-  request_id  String?  @db.Uuid
-  case_id     String   @db.Uuid
-  file_name   String
-  file_path   String
-  mime_type   String
-  size_bytes  Int
-  uploaded_by String   @db.Uuid
-  embedding   Unsupported("vector(768)")?
-  created_at  DateTime @default(now())
-  updated_at  DateTime @updatedAt
-  version     Int      @default(1)
-
-  case    Case             @relation(fields: [case_id], references: [id], onDelete: Cascade)
-  request DocumentRequest? @relation(fields: [request_id], references: [id])
-  profile Profile          @relation(fields: [uploaded_by], references: [id])
+  firm    Firm    @relation(fields: [firm_id], references: [id])
+  case    Case    @relation(fields: [case_id], references: [id], onDelete: Cascade)
+  user    Profile @relation(fields: [user_id], references: [id])
 }
 
 model CourtEvent {
-  id          String    @id @default(uuid()) @db.Uuid
-  case_id     String    @db.Uuid
-  event_date  DateTime
-  event_type  EventType
-  title       String
-  description String?
-  metadata    Json?
-  created_at  DateTime  @default(now())
-  updated_at  DateTime  @updatedAt
-  version     Int       @default(1)
+  id                   String    @id @default(uuid()) @db.Uuid
+  firm_id              String    @db.Uuid
+  case_id              String    @db.Uuid
+  event_type           String
+  court_name           String?
+  court_level          String?
+  court_location       String?
+  event_at             DateTime? @db.Timestamptz
+  outcome              String?
+  next_date            DateTime? @db.Timestamptz
+  next_required_action String?
+  responsible_user_id  String?   @db.Uuid
+  client_visible       Boolean   @default(false)
+  internal_notes       String?
+  client_update        String?
+  source               String?
+  confidence_level     String?   // low, medium, high, verified
+  created_by           String?   @db.Uuid
+  verified_by          String?   @db.Uuid
+  created_at           DateTime  @default(now()) @db.Timestamptz
 
-  case Case @relation(fields: [case_id], references: [id], onDelete: Cascade)
+  firm             Firm     @relation(fields: [firm_id], references: [id])
+  case             Case     @relation(fields: [case_id], references: [id], onDelete: Cascade)
+  responsible_user Profile? @relation("CourtEventResponsible", fields: [responsible_user_id], references: [id])
+  creator          Profile? @relation("CourtEventCreatedBy", fields: [created_by], references: [id])
+  verifier         Profile? @relation("CourtEventVerifiedBy", fields: [verified_by], references: [id])
+}
+
+model Task {
+  id              String    @id @default(uuid()) @db.Uuid
+  firm_id         String    @db.Uuid
+  case_id         String?   @db.Uuid
+  title           String
+  task_type       String
+  description     String?
+  assigned_by     String?   @db.Uuid
+  assigned_to     String?   @db.Uuid
+  owner_actor     String?   // lawyer, paralegal, client, external_agency
+  priority        String    @default("medium") // low, medium, high, critical
+  status          String    @default("open") // open, in_progress, blocked, completed, cancelled, awaiting_review
+  due_at          DateTime? @db.Timestamptz
+  completed_at    DateTime? @db.Timestamptz
+  client_visible  Boolean   @default(false)
+  blocked_reason  String?
+  created_at      DateTime  @default(now()) @db.Timestamptz
+  updated_at      DateTime  @updatedAt @db.Timestamptz
+
+  firm        Firm     @relation(fields: [firm_id], references: [id])
+  case        Case?    @relation(fields: [case_id], references: [id], onDelete: Cascade)
+  assigner    Profile? @relation("TaskAssignedBy", fields: [assigned_by], references: [id])
+  assignee    Profile? @relation("TaskAssignedTo", fields: [assigned_to], references: [id])
+}
+
+model DocumentRequest {
+  id                         String    @id @default(uuid()) @db.Uuid
+  firm_id                    String    @db.Uuid
+  case_id                    String    @db.Uuid
+  requested_from_actor       String    // client, lawyer, paralegal, external_agency
+  requested_from_user_id     String?   @db.Uuid
+  document_type              String
+  description                String?
+  required_format            String?
+  due_at                     DateTime? @db.Timestamptz
+  status                     String    @default("requested") // requested, uploaded, under_review, approved, rejected, expired, not_required
+  uploaded_document_id       String?   @db.Uuid
+  rejection_reason           String?
+  client_visible_instruction String?
+  requested_by               String?   @db.Uuid
+  created_at                 DateTime  @default(now()) @db.Timestamptz
+
+  firm            Firm      @relation(fields: [firm_id], references: [id])
+  case            Case      @relation(fields: [case_id], references: [id], onDelete: Cascade)
+  requested_from  Profile?  @relation("DocRequestedFrom", fields: [requested_from_user_id], references: [id])
+  requester       Profile?  @relation("DocRequestedBy", fields: [requested_by], references: [id])
+  
+  documents       Document[]
+}
+
+model Document {
+  id                    String    @id @default(uuid()) @db.Uuid
+  firm_id               String    @db.Uuid
+  case_id               String?   @db.Uuid
+  request_id            String?   @db.Uuid
+  uploaded_by           String?   @db.Uuid
+  storage_bucket        String
+  storage_path          String
+  file_name             String
+  mime_type             String?
+  file_size_bytes       BigInt?
+  document_type         String?
+  ocr_status            String?   @default("pending")
+  extracted_summary     Json?
+  review_status         String?   @default("pending")
+  confidentiality_level String?   @default("case_confidential")
+  created_at            DateTime  @default(now()) @db.Timestamptz
+
+  firm     Firm             @relation(fields: [firm_id], references: [id])
+  case     Case?            @relation(fields: [case_id], references: [id], onDelete: Cascade)
+  request  DocumentRequest? @relation(fields: [request_id], references: [id])
+  uploader Profile?         @relation("DocUploadedBy", fields: [uploaded_by], references: [id])
+}
+
+model ExternalAgencyTask {
+  id                       String    @id @default(uuid()) @db.Uuid
+  firm_id                  String    @db.Uuid
+  case_id                  String    @db.Uuid
+  agency_name              String
+  contact_person           String?
+  contact_phone            String?
+  contact_email            String?
+  expected_output          String?
+  status                   String    @default("pending")
+  due_at                   DateTime? @db.Timestamptz
+  follow_up_frequency_days Int?      @default(3)
+  responsible_lawyer_id    String?   @db.Uuid
+  responsible_paralegal_id String?   @db.Uuid
+  latest_follow_up_note    String?
+  completed_at             DateTime? @db.Timestamptz
+  created_at               DateTime  @default(now()) @db.Timestamptz
+
+  firm                 Firm     @relation(fields: [firm_id], references: [id])
+  case                 Case     @relation(fields: [case_id], references: [id], onDelete: Cascade)
+  responsible_lawyer   Profile? @relation("ExtTaskLawyer", fields: [responsible_lawyer_id], references: [id])
+  responsible_paralegal Profile? @relation("ExtTaskParalegal", fields: [responsible_paralegal_id], references: [id])
 }
 
 model TimelineEvent {
   id             String   @id @default(uuid()) @db.Uuid
+  firm_id        String   @db.Uuid
   case_id        String   @db.Uuid
-  event_date     DateTime
+  actor_user_id  String?  @db.Uuid
+  actor_type     String
+  event_type     String
   title          String
   description    String?
-  client_visible Boolean  @default(true)
-  created_at     DateTime @default(now())
-  updated_at     DateTime @updatedAt
-  version        Int      @default(1)
+  metadata       Json?
+  client_visible Boolean  @default(false)
+  created_at     DateTime @default(now()) @db.Timestamptz
 
-  case Case @relation(fields: [case_id], references: [id], onDelete: Cascade)
-}
-
-model Task {
-  id          String     @id @default(uuid()) @db.Uuid
-  case_id     String     @db.Uuid
-  assignee_id String     @db.Uuid
-  title       String
-  description String?
-  due_date    DateTime
-  status      TaskStatus
-  created_at  DateTime   @default(now())
-  updated_at  DateTime   @updatedAt
-  version     Int        @default(1)
-
-  case     Case    @relation(fields: [case_id], references: [id], onDelete: Cascade)
-  assignee Profile @relation(fields: [assignee_id], references: [id])
+  firm  Firm     @relation(fields: [firm_id], references: [id])
+  case  Case     @relation(fields: [case_id], references: [id], onDelete: Cascade)
+  actor Profile? @relation(fields: [actor_user_id], references: [id])
 }
 
 model AuditLog {
   id          String   @id @default(uuid()) @db.Uuid
+  firm_id     String   @db.Uuid
   user_id     String?  @db.Uuid
   entity_type String
   entity_id   String   @db.Uuid
-  action_type String
+  action_type String   // create, update, delete, login, download, upload, permission_change
   before_data Json?
   after_data  Json?
   ip_address  String?
   user_agent  String?
-  created_at  DateTime @default(now())
+  created_at  DateTime @default(now()) @db.Timestamptz
 
-  user        Profile? @relation(fields: [user_id], references: [id])
+  firm Firm     @relation(fields: [firm_id], references: [id])
+  user Profile? @relation(fields: [user_id], references: [id])
 }

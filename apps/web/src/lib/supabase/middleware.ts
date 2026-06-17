@@ -63,59 +63,27 @@ export async function updateSession(request: NextRequest) {
   }
 
   if (user) {
-    // Fetch profile to check role and requires_password_reset
+    // Fetch profile to check role
     const { data: profile } = await supabase
       .from('Profile')
-      .select('role, requires_password_reset')
+      .select('role')
       .eq('id', user.id)
       .single()
 
     if (profile) {
-      if (profile.requires_password_reset && !isResetPasswordRoute) {
-        const url = request.nextUrl.clone()
-        url.pathname = '/reset-password'
-        return NextResponse.redirect(url)
-      }
 
-      if (!profile.requires_password_reset && isResetPasswordRoute) {
-        const url = request.nextUrl.clone()
-        const rolePath = profile.role === 'admin' ? '/manager' : `/${profile.role}`
-        url.pathname = `${rolePath}/dashboard`
-        return NextResponse.redirect(url)
-      }
-
-      // Default routing to specific role dashboards
+      // Unified routing to the OS Dashboard
       if ((path.endsWith('/login') || path === '/workspace' || path === '/') && !isResetPasswordRoute) {
         const url = request.nextUrl.clone()
-        const rolePath = profile.role === 'admin' ? '/manager' : `/${profile.role}`
-        url.pathname = `${rolePath}/dashboard`
+        url.pathname = '/os/dashboard'
         return NextResponse.redirect(url)
       }
       
-      // Strict routing: block users from accessing other roles' dashboards
-      if (!isResetPasswordRoute) {
-        const rolePath = profile.role === 'admin' ? '/manager' : `/${profile.role}`
-        
-        if (path.startsWith('/manager') && profile.role !== 'admin') {
-          const url = request.nextUrl.clone()
-          url.pathname = `${rolePath}/dashboard`
-          return NextResponse.redirect(url)
-        }
-        if (path.startsWith('/lawyer') && profile.role !== 'lawyer') {
-          const url = request.nextUrl.clone()
-          url.pathname = `${rolePath}/dashboard`
-          return NextResponse.redirect(url)
-        }
-        if (path.startsWith('/paralegal') && profile.role !== 'paralegal') {
-          const url = request.nextUrl.clone()
-          url.pathname = `${rolePath}/dashboard`
-          return NextResponse.redirect(url)
-        }
-        if (path.startsWith('/client') && profile.role !== 'client') {
-          const url = request.nextUrl.clone()
-          url.pathname = `${rolePath}/dashboard`
-          return NextResponse.redirect(url)
-        }
+      // Prevent access to old routes
+      if (!isResetPasswordRoute && (path.startsWith('/manager') || path.startsWith('/lawyer') || path.startsWith('/paralegal') || path.startsWith('/client'))) {
+        const url = request.nextUrl.clone()
+        url.pathname = '/os/dashboard'
+        return NextResponse.redirect(url)
       }
     }
   }
