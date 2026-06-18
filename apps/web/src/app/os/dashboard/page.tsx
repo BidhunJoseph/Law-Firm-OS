@@ -19,7 +19,8 @@ export default async function OSDashboard() {
     include: {
       client: true,
       tasks: {
-        orderBy: { created_at: 'asc' }
+        orderBy: { created_at: 'asc' },
+        include: { assignee: true }
       },
       assignments: {
         include: {

@@ -52,13 +52,9 @@ export async function updateSession(request: NextRequest) {
   const isResetPasswordRoute = path.startsWith('/reset-password');
 
   if (!isPublicRoute && !isResetPasswordRoute && !user) {
-    // If no user is logged in, route them to their requested context's login or the main homepage
+    // If no user is logged in, route them to the main homepage (login)
     const url = request.nextUrl.clone()
-    if (path.startsWith('/manager')) url.pathname = '/manager/login'
-    else if (path.startsWith('/lawyer')) url.pathname = '/lawyer/login'
-    else if (path.startsWith('/paralegal')) url.pathname = '/paralegal/login'
-    else if (path.startsWith('/client')) url.pathname = '/client/login'
-    else url.pathname = '/'
+    url.pathname = '/'
     return NextResponse.redirect(url)
   }
 

@@ -179,7 +179,7 @@ const MemoizedTaskRow = memo(({ task, firmUsers, onUpdate, onDelete }: { task: a
         )}
         
         <div className="mt-3 flex flex-wrap items-center gap-3">
-            <div className="relative">
+            <div className={`relative ${task.id.startsWith('temp-') ? 'pointer-events-none opacity-50' : ''}`}>
               <div onClick={() => setEditingAssignee(true)} className="cursor-pointer hover:ring-2 hover:ring-[#0066CC]/30 rounded-md transition-all">
                 {task.assignee ? (
                   <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[#1D1D1F] uppercase tracking-wider bg-black/[0.03] px-2.5 py-1 rounded-md">
@@ -213,7 +213,7 @@ const MemoizedTaskRow = memo(({ task, firmUsers, onUpdate, onDelete }: { task: a
                 onBlur={() => setEditingDate(false)}
               />
             ) : (
-              <div onClick={() => setEditingDate(true)} className="cursor-pointer hover:ring-2 hover:ring-[#0066CC]/30 rounded-md transition-all">
+              <div onClick={() => setEditingDate(true)} className={`cursor-pointer hover:ring-2 hover:ring-[#0066CC]/30 rounded-md transition-all ${task.id.startsWith('temp-') ? 'pointer-events-none opacity-50' : ''}`}>
                 {task.due_at ? (
                   <span className={`inline-flex text-[11px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-md ${new Date(task.due_at) < new Date() && task.status !== 'completed' ? 'bg-red-50 text-red-600' : 'bg-blue-50 text-[#0066CC]'}`}>
                     {format(new Date(task.due_at), 'MMM d')}

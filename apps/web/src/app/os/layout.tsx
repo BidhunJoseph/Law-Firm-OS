@@ -2,6 +2,7 @@ import { ReactNode } from "react";
 import Link from "next/link";
 import { Shield, LayoutDashboard, Users, FileText, Calendar, Settings, LogOut, Briefcase, Archive } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
+import { logoutUser } from "@/server/actions/auth-login-actions";
 
 export default async function OSLayout({ children }: { children: ReactNode }) {
   const supabase = await createClient();
@@ -58,7 +59,7 @@ export default async function OSLayout({ children }: { children: ReactNode }) {
                     <p className="text-xs font-semibold text-[#1D1D1F] truncate max-w-[100px]">{user?.email}</p>
                  </div>
               </div>
-              <form action="/auth/signout" method="POST">
+              <form action={logoutUser}>
                  <button className="p-1.5 text-[#86868B] hover:text-[#1D1D1F] hover:bg-black/[0.05] rounded-md transition-all">
                     <LogOut className="w-4 h-4" />
                  </button>

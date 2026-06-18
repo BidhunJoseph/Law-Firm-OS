@@ -36,18 +36,18 @@ export function ChecklistHubClient({ initialCases, firmUsers, firmClients, curre
     return [...initialCases].map(matter => {
       let score = 0;
       const now = new Date();
+      const threeDaysFromNow = new Date();
+      threeDaysFromNow.setDate(threeDaysFromNow.getDate() + 3);
       
       // +30 for Red Risk, +10 for Amber Risk
       if (matter.risk_level === 'red') score += 30;
       if (matter.risk_level === 'amber') score += 10;
 
-      // +20 if there are overdue tasks
-      const hasOverdueTasks = matter.tasks?.some((t: any) => t.status !== 'completed' && t.due_at && new Date(t.due_at) < now);
-      if (hasOverdueTasks) score += 20;
+      // +50 if there are tasks due within 72 hours (urgent or overdue)
+      const hasUrgentTasks = matter.tasks?.some((t: any) => t.status !== 'completed' && t.due_at && new Date(t.due_at) <= threeDaysFromNow);
+      if (hasUrgentTasks) score += 50;
 
       // +50 if there is a court event in the next 3 days
-      const threeDaysFromNow = new Date();
-      threeDaysFromNow.setDate(threeDaysFromNow.getDate() + 3);
       const hasImminentCourtEvent = matter.court_events?.some((ce: any) => ce.event_at && new Date(ce.event_at) > now && new Date(ce.event_at) <= threeDaysFromNow);
       if (hasImminentCourtEvent) score += 50;
 
@@ -62,17 +62,17 @@ export function ChecklistHubClient({ initialCases, firmUsers, firmClients, curre
 
   // 2. Universal Critical Actions Aggregation
   const criticalItems = React.useMemo(() => {
-    const overdueTasks: any[] = [];
+    const urgentTasks: any[] = [];
     const imminentEvents: any[] = [];
     const now = new Date();
     const threeDaysFromNow = new Date();
     threeDaysFromNow.setDate(threeDaysFromNow.getDate() + 3);
 
     initialCases.forEach(matter => {
-      // Overdue Tasks
+      // Urgent Tasks (Overdue or due within next 72 hours)
       matter.tasks?.forEach((t: any) => {
-        if (t.status !== 'completed' && t.due_at && new Date(t.due_at) < now) {
-          overdueTasks.push({ ...t, matterId: matter.id, matterTitle: matter.title, matterCode: matter.case_code });
+        if (t.status !== 'completed' && t.due_at && new Date(t.due_at) <= threeDaysFromNow) {
+          urgentTasks.push({ ...t, matterId: matter.id, matterTitle: matter.title, matterCode: matter.case_code });
         }
       });
       // Imminent Court Events
@@ -84,10 +84,10 @@ export function ChecklistHubClient({ initialCases, firmUsers, firmClients, curre
     });
 
     // Sort chronologically
-    overdueTasks.sort((a, b) => new Date(a.due_at).getTime() - new Date(b.due_at).getTime());
+    urgentTasks.sort((a, b) => new Date(a.due_at).getTime() - new Date(b.due_at).getTime());
     imminentEvents.sort((a, b) => new Date(a.event_at).getTime() - new Date(b.event_at).getTime());
 
-    return { overdueTasks, imminentEvents };
+    return { urgentTasks, imminentEvents };
   }, [initialCases]);
 
   return (
@@ -199,33 +199,35 @@ export function ChecklistHubClient({ initialCases, firmUsers, firmClients, curre
                   )}
                 </div>
 
-                {/* Overdue Tasks Section */}
+                {/* Urgent Tasks Section */}
                 <div>
                   <h4 className="text-[11px] font-bold text-red-800 uppercase tracking-widest mb-3 flex items-center gap-2">
-                    <span className="w-1.5 h-1.5 rounded-full bg-orange-500"></span>
-                    Overdue Timelines
+                    <span className="w-1.5 h-1.5 rounded-full bg-orange-500 animate-pulse"></span>
+                    Urgent Tasks (Next 72h)
                   </h4>
-                  {criticalItems.overdueTasks.length > 0 ? (
+                  {criticalItems.urgentTasks.length > 0 ? (
                     <div className="space-y-3">
-                      {criticalItems.overdueTasks.map(t => (
+                      {criticalItems.urgentTasks.map(t => {
+                        const isOverdue = new Date(t.due_at) < new Date();
+                        return (
                         <div 
-                          key={`overdue-${t.id}`}
+                          key={`urgent-${t.id}`}
                           onClick={() => {
                             const found = initialCases.find(c => c.id === t.matterId);
                             if (found) setSelectedMatter(found);
                           }}
-                          className="bg-white p-4 rounded-2xl border border-orange-200/50 shadow-sm cursor-pointer hover:border-orange-300 hover:shadow-md transition-all group"
+                          className={`bg-white p-4 rounded-2xl border shadow-sm cursor-pointer transition-all group ${isOverdue ? 'border-red-200/50 hover:border-red-300 hover:shadow-md' : 'border-orange-200/50 hover:border-orange-300 hover:shadow-md'}`}
                         >
                           <div className="flex justify-between items-start mb-1.5">
                             <span className="text-[10px] font-bold uppercase tracking-wider text-[#0066CC] bg-[#0066CC]/10 px-2 py-0.5 rounded-md">{t.matterCode}</span>
-                            <span className="text-[11px] font-bold text-orange-600 bg-orange-50 px-2 py-0.5 rounded-md">
-                              {new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(new Date(t.due_at))}
+                            <span className={`text-[11px] font-bold px-2 py-0.5 rounded-md ${isOverdue ? 'text-red-600 bg-red-50' : 'text-orange-600 bg-orange-50'}`}>
+                              {isOverdue ? 'OVERDUE' : new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(new Date(t.due_at))}
                             </span>
                           </div>
                           <p className="text-[13px] font-bold text-[#1D1D1F] line-clamp-1 group-hover:text-[#0066CC] transition-colors">{t.matterTitle}</p>
-                          <p className="text-[12px] text-[#86868B] font-medium mt-1 leading-snug line-clamp-2">{t.title}</p>
+                          <p className={`text-[12px] font-medium mt-1 leading-snug line-clamp-2 ${isOverdue ? 'text-red-700/80' : 'text-[#86868B]'}`}>{t.title}</p>
                         </div>
-                      ))}
+                      )})}
                     </div>
                   ) : (
                     <div className="bg-white/50 border border-black/5 rounded-2xl p-4 text-center">

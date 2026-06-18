@@ -22,7 +22,8 @@ export async function getLawyerDashboardData() {
       client: true,
       tasks: {
         where: { status: 'open' },
-        orderBy: { due_at: 'asc' }
+        orderBy: { due_at: 'asc' },
+        include: { assignee: true }
       },
       court_events: {
         where: { event_at: { gte: new Date() } },
@@ -76,7 +77,9 @@ export async function getParalegalCases() {
     },
     include: {
       client: true,
-      tasks: true
+      tasks: {
+        include: { assignee: true }
+      }
     }
   })
 
